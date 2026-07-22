@@ -35,6 +35,32 @@ def test_print_is_a_stream():
     assert streams and "hello from judb" in streams[0].data["text"]
 
 
+def test_introspection_is_captured_not_paged_to_terminal():
+    """`obj?` introspection must render inline, not escape to the system pager
+    (which would write the docstring to the debuggee's terminal, off in judb)."""
+    console = Console()
+    console.run_cell("def greet(name):\n    'say hi'\n    return name")
+    result = console.run_cell("greet?")
+    assert result.success
+    info = result.first_of("text/plain")
+    assert info is not None and "say hi" in info
+    # And nothing leaked out as a stream (that would be the pager fallback).
+    assert not [o for o in result.outputs if o.kind == "stream"]
+
+
+def test_help_is_captured_not_paged_to_terminal():
+    """`help(obj)` pages via pydoc (which caches a `less` pager keyed on stdout);
+    judb must capture it inline as clean text, not send it to the terminal."""
+    console = Console()
+    result = console.run_cell("help(len)")
+    assert result.success
+    info = result.first_of("text/plain")
+    assert info is not None
+    assert "Return the number of items" in info
+    # pydoc's `\b` overstrike bolding must be stripped for the browser.
+    assert "\x08" not in info
+
+
 def test_plot_is_a_png_bundle():
     result = Console().run_cell(
         "import matplotlib.pyplot as plt; plt.plot([1, 2, 3]); None"

@@ -42,4 +42,17 @@ describe("Output renderer registry", () => {
     const { container } = out({ kind: "stream", data: { name: "stderr", text: "oops" } });
     expect(container.querySelector("pre.stderr")?.textContent).toBe("oops");
   });
+
+  it("renders ANSI in text/plain as coloured HTML (e.g. `obj?` introspection)", () => {
+    // "\x1b[31mSignature\x1b[39m" — red then reset, the shape pinfo emits.
+    const { container } = out({
+      kind: "display_data",
+      data: { "text/plain": "[31mSignature[39m: greet(name)" },
+    });
+    const pre = container.querySelector("pre.out");
+    expect(pre?.textContent).toContain("Signature: greet(name)");
+    // anser turned the escape into a styled span rather than leaving raw codes.
+    expect(pre?.querySelector("span")).toBeTruthy();
+    expect(pre?.innerHTML).not.toContain("[");
+  });
 });

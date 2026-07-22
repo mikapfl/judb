@@ -18,6 +18,7 @@ the paused frame's real objects.
 
 import contextlib
 import io
+import pydoc
 from collections.abc import Iterator
 from types import FrameType
 from typing import Any
@@ -30,6 +31,7 @@ matplotlib.use("module://matplotlib_inline.backend_inline")
 
 from IPython.core.displayhook import DisplayHook
 from IPython.core.displaypub import DisplayPublisher
+from IPython.core.error import TryNext
 from IPython.core.interactiveshell import InteractiveShell
 from IPython.core.pylabtools import select_figure_formats
 from matplotlib_inline.backend_inline import flush_figures
@@ -90,6 +92,47 @@ class _CapturingDisplayPublisher(DisplayPublisher):
         pass
 
 
+def _capture_pager(
+    shell: InteractiveShell,
+    data: Any,  # noqa: ANN401 — a mime bundle or plain string from the pager
+    start: int = 0,
+    screen_lines: int = 0,
+) -> None:
+    """IPython ``show_in_pager`` hook: capture ``obj?`` / ``obj??`` introspection.
+
+    Without this, IPython pages the docstring/source through the *system pager*
+    (``less``), which writes to the debuggee's controlling terminal — off in the
+    debuggee's stdout, not in judb. Appending it to ``_capture`` turns it into a
+    normal ``display_data`` output rendered in the console instead. When no cell
+    is running (no active buffer) we defer to the default pager via ``TryNext``.
+    """
+    if _capture is None:
+        raise TryNext
+    bundle = dict(data) if isinstance(data, dict) else {"text/plain": str(data)}
+    if bundle:
+        _capture.append(Output("display_data", bundle))
+
+
+def _pydoc_pager(text: str, title: str = "") -> None:
+    """Replacement for ``pydoc.pager`` so ``help(obj)`` renders inline.
+
+    ``help()`` reaches the terminal by a *different* route than IPython's ``?``:
+    it calls ``pydoc.pager``, which on first use caches a concrete pager
+    (``less``) keyed on the *then-current* ``sys.stdout``. So a ``help()`` run in
+    the debuggee's terminal before pausing would pin the ``less`` pager, and every
+    later in-console ``help()`` would page to that terminal despite our stdout
+    redirect. Replacing ``pydoc.pager`` outright sidesteps the cache: while a cell
+    runs we capture the text (stripping pydoc's ``\\b`` overstrike bolding via
+    ``pydoc.plain``); otherwise we page normally without re-clobbering ourselves.
+    """
+    if _capture is None:
+        pydoc.getpager()(text, title)
+        return
+    clean = pydoc.plain(text)
+    if clean:
+        _capture.append(Output("display_data", {"text/plain": clean}))
+
+
 class Console:
     """A reusable embedded IPython console for in-frame cell execution."""
 
@@ -107,6 +150,14 @@ class Console:
         # whereas jedi is slower and, without real type info for frame locals,
         # frequently returns nothing here.
         self.shell.Completer.use_jedi = False
+        # Capture `obj?` / `obj??` introspection inline instead of letting it
+        # escape to the debuggee's terminal pager (see _capture_pager).
+        self.shell.set_hook("show_in_pager", _capture_pager)
+        # Same intent for `help(obj)`, which pages via pydoc, not IPython
+        # (see _pydoc_pager). Process-global, deliberately: judb owns the
+        # debuggee's console experience. (setattr: pydoc.pager is a typed
+        # module attribute, so a plain rebind trips the type checker.)
+        setattr(pydoc, "pager", _pydoc_pager)  # noqa: B010
         # Frame names currently injected into user_ns, and the base values they
         # shadow (so switching frames doesn't leak names or clobber IPython's own
         # entries / the user's scratch). See _sync_frame_namespace.

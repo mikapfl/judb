@@ -46,6 +46,10 @@
   <iframe class="out" title="output" sandbox="allow-scripts" srcdoc={String(d["text/html"])}></iframe>
 {:else if richMime === "application/json"}
   <pre class="out">{JSON.stringify(d["application/json"], null, 2)}</pre>
+{:else if richMime === "text/plain"}
+  <!-- text/plain often carries ANSI (e.g. `obj?` introspection); anser escapes
+       HTML, so plain reprs render identically while coloured ones show right. -->
+  <pre class="out">{@html ansi(String(d["text/plain"]))}</pre>
 {:else if richMime}
   <pre class="out">{String(d[richMime])}</pre>
 {/if}
