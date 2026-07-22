@@ -1,7 +1,7 @@
 // The single websocket-backed reactive store. Every pane reads from `conn`;
 // commands go out through `conn.send(...)`. See PHASE2_STACK.md §6.
 
-import type { Command, Output, ServerMsg, StackFrame } from "../protocol";
+import type { Command, FrameView, Output, ServerMsg, StackFrame } from "../protocol";
 
 export type Status =
   | "connecting"
@@ -24,6 +24,7 @@ class Connection {
   source = $state("");
   locals = $state<string[]>([]);
   stack = $state<StackFrame[]>([]);
+  selected = $state(0);
   cells = $state<Cell[]>([]);
 
   #ws: WebSocket | null = null;
@@ -59,16 +60,22 @@ class Connection {
     this.send({ cmd: "execute_cell", code });
   }
 
+  selectFrame(index: number): void {
+    if (!this.paused || index === this.selected) return;
+    this.send({ cmd: "select_frame", index });
+  }
+
   #onMessage(msg: ServerMsg): void {
     switch (msg.type) {
       case "paused":
         this.status = "paused";
-        this.filename = msg.filename;
-        this.lineno = msg.lineno;
-        this.functionName = msg.function;
-        this.source = msg.source ?? "";
-        this.locals = msg.locals ?? [];
         this.stack = msg.stack ?? [];
+        this.selected = msg.selected ?? this.stack.length - 1;
+        this.#showFrame(msg);
+        break;
+      case "frame_selected":
+        this.selected = msg.index;
+        this.#showFrame(msg);
         break;
       case "running":
         this.status = "running";
@@ -86,6 +93,16 @@ class Connection {
         ]);
         break;
     }
+  }
+
+  // Point the source / location / variables panes at a frame (the innermost on
+  // pause, or the one just selected).
+  #showFrame(view: FrameView): void {
+    this.filename = view.filename;
+    this.lineno = view.lineno;
+    this.functionName = view.function;
+    this.source = view.source ?? "";
+    this.locals = view.locals ?? [];
   }
 
   // Cell execution is serialized on the debuggee thread, so the newest pending

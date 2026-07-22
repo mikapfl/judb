@@ -3,8 +3,8 @@
 
   const base = (path: string) => path.split("/").pop() ?? path;
 
-  // Phase 2 TODO (§7): clicking a frame should send `select_frame(index)` so the
-  // source/vars/console retarget. The innermost (paused) frame is the last one.
+  // Clicking a frame retargets source / variables / console to it (§7).
+  // The innermost (paused) frame is the last one.
 </script>
 
 <div class="stack">
@@ -13,9 +13,15 @@
   {:else}
     <ul>
       {#each conn.stack as frame, i (i)}
-        <li class:current={i === conn.stack.length - 1}>
-          <span class="fn">{frame.function}</span>
-          <span class="loc">{base(frame.filename)}:{frame.lineno}</span>
+        <li>
+          <button
+            class:selected={i === conn.selected}
+            disabled={!conn.paused}
+            onclick={() => conn.selectFrame(i)}
+          >
+            <span class="fn">{frame.function}</span>
+            <span class="loc">{base(frame.filename)}:{frame.lineno}</span>
+          </button>
         </li>
       {/each}
     </ul>
@@ -37,16 +43,34 @@
     list-style: none;
   }
   li {
+    margin: 0;
+  }
+  /* Rows are buttons for keyboard/click a11y; strip the default button chrome. */
+  button {
     display: flex;
     justify-content: space-between;
     gap: 0.75rem;
+    width: 100%;
     padding: 0.15rem 0.35rem;
+    border: none;
     border-radius: 3px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
   }
-  li.current {
+  button:hover:not(:disabled) {
+    background: var(--bg-raised);
+  }
+  button:disabled {
+    opacity: 1;
+    cursor: default;
+  }
+  button.selected {
     background: var(--accent-bg);
   }
-  li.current .fn {
+  button.selected .fn {
     color: var(--accent);
   }
   .loc {

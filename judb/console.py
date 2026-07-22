@@ -92,6 +92,11 @@ class Console:
         )
         matplotlib.interactive(True)
         select_figure_formats(self.shell, {"png"})
+        # Frame names currently injected into user_ns, and the base values they
+        # shadow (so switching frames doesn't leak names or clobber IPython's own
+        # entries / the user's scratch). See _sync_frame_namespace.
+        self._injected: set[str] = set()
+        self._shadowed: dict[str, Any] = {}
 
     def run_cell(self, code: str, frame: FrameType | None = None) -> CellResult:
         """Execute ``code`` and return the captured rich outputs.
@@ -106,8 +111,7 @@ class Console:
         _capture = outputs  # picked up by the capture classes while the cell runs
 
         if frame is not None:
-            self.shell.user_ns.update(frame.f_globals)
-            self.shell.user_ns.update(frame.f_locals)
+            self._sync_frame_namespace(frame)
 
         stdout, stderr = io.StringIO(), io.StringIO()
         try:
@@ -138,6 +142,28 @@ class Console:
             )
 
         return CellResult(outputs=final, success=result.success)
+
+    def _sync_frame_namespace(self, frame: FrameType) -> None:
+        """Make user_ns reflect *exactly* ``frame``'s globals + locals.
+
+        A previous frame's names must not leak (selecting an outer frame that
+        lacks ``df`` should not still resolve ``df``), yet we must not disturb
+        IPython's own entries (``display``, ``get_ipython``, ...) or names the
+        user bound in a cell (notebook-style scratch persists). So we track the
+        frame names we injected and the base values they shadowed, undo that,
+        then inject the new frame — remembering what it shadows in turn.
+        """
+        ns = self.shell.user_ns
+        for key in self._injected:
+            if key in self._shadowed:
+                ns[key] = self._shadowed[key]
+            else:
+                ns.pop(key, None)
+
+        new_vars = {**frame.f_globals, **frame.f_locals}
+        self._shadowed = {k: ns[k] for k in new_vars if k in ns}
+        ns.update(new_vars)
+        self._injected = set(new_vars)
 
     def evaluate(self, code: str, frame: FrameType | None = None) -> Any:  # noqa: ANN401
         """Convenience for tests: run ``code`` and return its ``text/plain``."""

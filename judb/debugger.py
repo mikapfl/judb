@@ -35,6 +35,10 @@ class Debugger(bdb.Bdb):
         self.inbound: queue.Queue[dict[str, Any]] = queue.Queue()
         self.outbound: queue.Queue[dict[str, Any]] = queue.Queue()
         self.current_frame: FrameType | None = None
+        # The stopped call stack (outermost-first, matching the `stack` message)
+        # and which frame the console + inspection currently target.
+        self._frames: list[FrameType] = []
+        self._selected = 0
         self._quitting = False
         self._server: DebugServer | None = None
 
@@ -60,14 +64,23 @@ class Debugger(bdb.Bdb):
 
     def interaction(self, frame: FrameType) -> None:
         self.current_frame = frame
+        # Freeze the stopped stack; selection starts at the innermost frame.
+        self._frames = self._frames_of(frame)
+        self._selected = len(self._frames) - 1
         self._emit_paused(frame)
         while True:
             msg = self.inbound.get()
             cmd = msg.get("cmd")
 
             if cmd == "execute_cell":
-                result = self.console.run_cell(msg.get("code", ""), frame)
+                # Run in the *selected* frame, not necessarily the innermost one.
+                target = self._frames[self._selected]
+                result = self.console.run_cell(msg.get("code", ""), target)
                 self._emit_cell_result(result)
+                continue
+
+            if cmd == "select_frame":
+                self._select_frame(msg.get("index"))
                 continue
 
             if cmd == "quit":
@@ -101,14 +114,36 @@ class Debugger(bdb.Bdb):
         self._emit(
             {
                 "type": "paused",
-                "filename": frame.f_code.co_filename,
-                "lineno": frame.f_lineno,
-                "function": frame.f_code.co_name,
-                "locals": sorted(frame.f_locals),
-                "source": "".join(linecache.getlines(frame.f_code.co_filename)),
+                **self._frame_view(frame),
                 "stack": self._stack_summary(frame),
+                "selected": self._selected,
             }
         )
+
+    def _select_frame(self, index: object) -> None:
+        """Retarget console + inspection to stack frame ``index`` (0 = outermost)."""
+        if not isinstance(index, int) or not (0 <= index < len(self._frames)):
+            self._emit({"type": "error", "message": f"bad frame index: {index!r}"})
+            return
+        self._selected = index
+        self._emit(
+            {
+                "type": "frame_selected",
+                "index": index,
+                **self._frame_view(self._frames[index]),
+            }
+        )
+
+    @staticmethod
+    def _frame_view(frame: FrameType) -> dict[str, Any]:
+        """The per-frame fields shared by ``paused`` and ``frame_selected``."""
+        return {
+            "filename": frame.f_code.co_filename,
+            "lineno": frame.f_lineno,
+            "function": frame.f_code.co_name,
+            "locals": sorted(frame.f_locals),
+            "source": "".join(linecache.getlines(frame.f_code.co_filename)),
+        }
 
     def _emit_cell_result(self, result: CellResult) -> None:
         self._emit(
@@ -123,19 +158,25 @@ class Debugger(bdb.Bdb):
         )
 
     @staticmethod
-    def _stack_summary(frame: FrameType | None) -> list[dict[str, Any]]:
-        stack: list[dict[str, Any]] = []
+    def _frames_of(frame: FrameType | None) -> list[FrameType]:
+        """The call stack as frame objects, outermost-first."""
+        frames: list[FrameType] = []
         while frame is not None:
-            stack.append(
-                {
-                    "filename": frame.f_code.co_filename,
-                    "lineno": frame.f_lineno,
-                    "function": frame.f_code.co_name,
-                }
-            )
+            frames.append(frame)
             frame = frame.f_back
-        stack.reverse()
-        return stack
+        frames.reverse()
+        return frames
+
+    def _stack_summary(self, frame: FrameType | None) -> list[dict[str, Any]]:
+        # Index-aligned with self._frames / the `selected` index.
+        return [
+            {
+                "filename": f.f_code.co_filename,
+                "lineno": f.f_lineno,
+                "function": f.f_code.co_name,
+            }
+            for f in self._frames_of(frame)
+        ]
 
     # --- server lifecycle -------------------------------------------------
 

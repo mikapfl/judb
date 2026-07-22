@@ -26,14 +26,25 @@ export interface StackFrame {
 
 // --- server -> client ---------------------------------------------------
 
-export interface PausedMsg {
-  type: "paused";
+/** Per-frame fields shared by `paused` and `frame_selected`. */
+export interface FrameView {
   filename: string;
   lineno: number;
   function: string;
   locals: string[];
   source: string;
+}
+
+export interface PausedMsg extends FrameView {
+  type: "paused";
   stack: StackFrame[];
+  /** Index into `stack` of the initially-targeted (innermost) frame. */
+  selected: number;
+}
+
+export interface FrameSelectedMsg extends FrameView {
+  type: "frame_selected";
+  index: number;
 }
 
 export interface RunningMsg {
@@ -57,6 +68,7 @@ export interface ErrorMsg {
 
 export type ServerMsg =
   | PausedMsg
+  | FrameSelectedMsg
   | RunningMsg
   | FinishedMsg
   | CellResultMsg
@@ -70,4 +82,5 @@ export type Command =
   | { cmd: "step" }
   | { cmd: "return" }
   | { cmd: "quit" }
-  | { cmd: "execute_cell"; code: string };
+  | { cmd: "execute_cell"; code: string }
+  | { cmd: "select_frame"; index: number };

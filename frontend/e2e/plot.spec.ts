@@ -59,3 +59,25 @@ test("plot a paused frame's array in the browser, then continue", async ({ page 
     if (proc.exitCode === null) proc.kill("SIGKILL");
   }
 });
+
+test("clicking an outer stack frame retargets the variables pane", async ({ page }) => {
+  const { proc, url } = await startDebuggee();
+
+  try {
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+
+    // Paused in `compute`: its local `scale` shows, `main`'s `label` does not.
+    await expect(page.locator(".vars")).toContainText("scale");
+    await expect(page.locator(".vars")).not.toContainText("label");
+
+    // Select the `main` frame from the call stack.
+    await page.locator(".stack button", { hasText: "main" }).click();
+
+    // Variables retarget to `main`: `label` appears, `scale` is gone.
+    await expect(page.locator(".vars")).toContainText("label");
+    await expect(page.locator(".vars")).not.toContainText("scale");
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
