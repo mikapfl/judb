@@ -48,6 +48,8 @@ export interface FrameView {
   function: string;
   locals: string[];
   source: string;
+  /** 1-based line numbers with a breakpoint set in this frame's file. */
+  breakpoints: number[];
 }
 
 export interface PausedMsg extends FrameView {
@@ -99,6 +101,15 @@ export interface CompletionsMsg {
   matches: string[];
 }
 
+/** Reply to `set_break`/`clear_break`: the file's remaining breakpoint lines
+ *  (so the gutter can redraw), plus `error` if bdb rejected the line. */
+export interface BreakpointsMsg {
+  type: "breakpoints";
+  filename: string;
+  lines: number[];
+  error?: string;
+}
+
 export type ServerMsg =
   | PausedMsg
   | FrameSelectedMsg
@@ -107,6 +118,7 @@ export type ServerMsg =
   | CellResultMsg
   | ExpandedMsg
   | CompletionsMsg
+  | BreakpointsMsg
   | ErrorMsg;
 
 // --- client -> server ---------------------------------------------------
@@ -120,4 +132,7 @@ export type Command =
   | { cmd: "execute_cell"; code: string }
   | { cmd: "select_frame"; index: number }
   | { cmd: "expand"; path: VarPath }
-  | { cmd: "complete"; code: string; cursor: number };
+  | { cmd: "complete"; code: string; cursor: number }
+  | { cmd: "set_break"; filename: string; line: number }
+  | { cmd: "clear_break"; filename: string; line: number }
+  | { cmd: "interrupt" };

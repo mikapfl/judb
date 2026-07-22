@@ -7,6 +7,7 @@ after selecting that outer frame.
 
 import asyncio
 import threading
+import time
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -232,6 +233,180 @@ def test_expand_returns_repr_and_children():
     asyncio.run(flow())
     thread.join(timeout=5)
     assert not thread.is_alive()
+
+
+def test_set_break_stops_at_a_later_line():
+    """A breakpoint set from the gutter while paused fires on the next
+    ``continue``, re-pausing the debuggee at that line."""
+    dbg = Debugger()
+    url = dbg.start_server(open_browser=False)
+    q = urlparse(url)
+    token = parse_qs(q.query)["token"][0]
+    ws_url = f"ws://{q.hostname}:{q.port}/ws?token={token}"
+
+    def debuggee() -> None:
+        dbg.set_trace()  # first pause lands on the next line (`a = 1`)
+        a = 1
+        b = 2
+        c = 3
+        _ = (a, b, c)
+
+    thread = threading.Thread(target=debuggee)
+    thread.start()
+
+    async def flow() -> None:
+        async with ClientSession() as session, session.ws_connect(ws_url) as ws:
+            paused = await _recv_type(ws, "paused")
+            fname = paused["filename"]
+            assert paused["breakpoints"] == []  # none set yet
+            target = paused["lineno"] + 2  # two lines on: `c = 3`
+
+            await ws.send_json({"cmd": "set_break", "filename": fname, "line": target})
+            bp = await _recv_type(ws, "breakpoints")
+            assert bp["lines"] == [target]
+            assert "error" not in bp
+
+            # Continue: bdb keeps tracing while a breakpoint exists, so we stop.
+            await ws.send_json({"cmd": "continue"})
+            await _recv_type(ws, "running")
+            paused2 = await _recv_type(ws, "paused")
+            assert paused2["lineno"] == target
+            assert paused2["breakpoints"] == [target]  # echoed on pause too
+
+            # Clear it and run to completion.
+            await ws.send_json(
+                {"cmd": "clear_break", "filename": fname, "line": target}
+            )
+            cleared = await _recv_type(ws, "breakpoints")
+            assert cleared["lines"] == []
+            await ws.send_json({"cmd": "continue"})
+            await _recv_type(ws, "running")
+
+    asyncio.run(flow())
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
+def test_set_break_on_nonexistent_line_reports_error():
+    dbg = Debugger()
+    url = dbg.start_server(open_browser=False)
+    q = urlparse(url)
+    token = parse_qs(q.query)["token"][0]
+    ws_url = f"ws://{q.hostname}:{q.port}/ws?token={token}"
+
+    def debuggee() -> None:
+        dbg.set_trace()
+        _ = 1
+
+    thread = threading.Thread(target=debuggee)
+    thread.start()
+
+    async def flow() -> None:
+        async with ClientSession() as session, session.ws_connect(ws_url) as ws:
+            paused = await _recv_type(ws, "paused")
+            # A line far past the file's end has no code: bdb rejects it.
+            await ws.send_json(
+                {
+                    "cmd": "set_break",
+                    "filename": paused["filename"],
+                    "line": 10_000_000,
+                }
+            )
+            bp = await _recv_type(ws, "breakpoints")
+            assert "error" in bp
+            assert bp["lines"] == []  # nothing was set
+            await ws.send_json({"cmd": "continue"})
+            await _recv_type(ws, "running")
+
+    asyncio.run(flow())
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
+def test_interrupt_stops_a_runaway_cell():
+    """A cell stuck in an infinite Python loop is stopped by ``interrupt``,
+    which raises KeyboardInterrupt into the debuggee thread; the cell comes back
+    as an error and the debugger is still usable afterwards."""
+    dbg = Debugger()
+    url = dbg.start_server(open_browser=False)
+    q = urlparse(url)
+    token = parse_qs(q.query)["token"][0]
+    ws_url = f"ws://{q.hostname}:{q.port}/ws?token={token}"
+
+    def debuggee() -> None:
+        dbg.set_trace()
+        _ = 1
+
+    thread = threading.Thread(target=debuggee)
+    thread.start()
+
+    async def flow() -> None:
+        async with ClientSession() as session, session.ws_connect(ws_url) as ws:
+            await _recv_type(ws, "paused")
+
+            # Launch a runaway cell, let it spin, then interrupt it.
+            await ws.send_json({"cmd": "execute_cell", "code": "while True:\n    pass"})
+            await asyncio.sleep(0.5)
+            await ws.send_json({"cmd": "interrupt"})
+            result = await _recv_type(ws, "cell_result")
+            assert _has_error(result["outputs"], "KeyboardInterrupt")
+
+            # The console still works after the interrupt.
+            await ws.send_json({"cmd": "execute_cell", "code": "1 + 1"})
+            again = await _recv_type(ws, "cell_result")
+            texts = [o["data"].get("text/plain", "") for o in again["outputs"]]
+            assert any("2" in t for t in texts)
+
+            await ws.send_json({"cmd": "continue"})
+            await _recv_type(ws, "running")
+
+    asyncio.run(flow())
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
+def test_interrupt_wakes_a_blocking_call_on_the_main_thread():
+    """When the debuggee is the main thread, ``interrupt`` sends a real SIGINT,
+    which — like Ctrl+C — breaks out of a blocking C call such as ``time.sleep``,
+    not just a pure-Python loop. Driven directly over the queues (no server) so
+    the debuggee runs on the test's main thread."""
+    dbg = Debugger()
+    collected: dict[str, Any] = {}
+
+    def driver() -> None:
+        paused = dbg.outbound.get(timeout=15)
+        assert paused["type"] == "paused"
+        # A cell that would block for 30s in C if not interrupted.
+        dbg.inbound.put({"cmd": "execute_cell", "code": "import time; time.sleep(30)"})
+        # Wait until the cell is actually running before interrupting it.
+        deadline = time.monotonic() + 10
+        while not dbg._executing and time.monotonic() < deadline:
+            time.sleep(0.01)
+        time.sleep(0.2)
+
+        started = time.monotonic()
+        dbg.interrupt()
+        result = dbg.outbound.get(timeout=15)
+        collected["result"] = result
+        collected["elapsed"] = time.monotonic() - started
+        dbg.inbound.put({"cmd": "continue"})
+
+    thread = threading.Thread(target=driver)
+    thread.start()
+
+    # Runs the debuggee on *this* (main) thread, so `interrupt` takes the SIGINT
+    # route; blocks in the interaction loop until the driver says continue.
+    dbg.set_trace()
+    _ = 1
+
+    thread.join(timeout=20)
+    assert not thread.is_alive()
+
+    result = collected["result"]
+    assert result["type"] == "cell_result"
+    assert _has_error(result["outputs"], "KeyboardInterrupt")
+    # The whole point: we broke the sleep well before its 30s, not waited it out.
+    assert collected["elapsed"] < 10
 
 
 def test_bad_frame_index_errors():

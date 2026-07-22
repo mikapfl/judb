@@ -13,9 +13,12 @@ appropriate bdb state and return, unblocking the debuggee.
 
 import atexit
 import bdb
+import ctypes
 import linecache
 import queue
+import signal
 import sys
+import threading
 import time
 from collections.abc import Iterable
 from types import FrameType, TracebackType
@@ -41,6 +44,12 @@ class Debugger(bdb.Bdb):
         self._selected = 0
         self._quitting = False
         self._server: DebugServer | None = None
+        # Identity of the debuggee thread (the one that blocks in the interaction
+        # loop and runs cells), and whether a cell is executing right now — both
+        # read by `interrupt`, which fires a KeyboardInterrupt into that thread
+        # from the *server* thread to stop a runaway cell.
+        self._debuggee_tid: int | None = None
+        self._executing = False
 
     # --- bdb hooks --------------------------------------------------------
 
@@ -64,54 +73,109 @@ class Debugger(bdb.Bdb):
 
     def interaction(self, frame: FrameType) -> None:
         self.current_frame = frame
+        self._debuggee_tid = threading.get_ident()
         # Freeze the stopped stack; selection starts at the innermost frame.
         self._frames = self._frames_of(frame)
         self._selected = len(self._frames) - 1
         self._emit_paused(frame)
         while True:
-            msg = self.inbound.get()
-            cmd = msg.get("cmd")
+            try:
+                if self._handle(frame):
+                    return
+            except KeyboardInterrupt:
+                # A late `interrupt` (aimed at a runaway cell) that landed after
+                # the cell already returned; swallow it so it can't derail the
+                # loop or escape into the debuggee.
+                continue
 
-            if cmd == "execute_cell":
-                # Run in the *selected* frame, not necessarily the innermost one.
-                target = self._frames[self._selected]
+    def _handle(self, frame: FrameType) -> bool:
+        """Process one inbound command. Returns True to leave the loop (resume)."""
+        msg = self.inbound.get()
+        cmd = msg.get("cmd")
+
+        if cmd == "execute_cell":
+            # Run in the *selected* frame, not necessarily the innermost one.
+            target = self._frames[self._selected]
+            # Mark the window in which `interrupt` may fire (see `interrupt`).
+            self._executing = True
+            try:
                 result = self.console.run_cell(msg.get("code", ""), target)
-                self._emit_cell_result(result)
-                continue
+            finally:
+                self._executing = False
+            self._emit_cell_result(result)
+            return False
 
-            if cmd == "select_frame":
-                self._select_frame(msg.get("index"))
-                continue
+        if cmd == "select_frame":
+            self._select_frame(msg.get("index"))
+            return False
 
-            if cmd == "complete":
-                self._complete(msg.get("code", ""), msg.get("cursor", 0))
-                continue
+        if cmd == "complete":
+            self._complete(msg.get("code", ""), msg.get("cursor", 0))
+            return False
 
-            if cmd == "expand":
-                self._expand(msg.get("path"))
-                continue
+        if cmd == "expand":
+            self._expand(msg.get("path"))
+            return False
 
-            if cmd == "quit":
-                self._quitting = True
-                self.set_quit()
-                return
+        if cmd in ("set_break", "clear_break"):
+            self._toggle_break(cmd, msg.get("filename"), msg.get("line"))
+            return False
 
-            if cmd == "step":
-                self.set_step()
-            elif cmd == "next":
-                self.set_next(frame)
-            elif cmd == "return":
-                self.set_return(frame)
-            elif cmd == "continue":
-                self.set_continue()
-            else:
-                self._emit({"type": "error", "message": f"unknown command: {cmd!r}"})
-                continue
+        if cmd == "quit":
+            self._quitting = True
+            self.set_quit()
+            return True
 
-            # A stepping command was issued: leave the loop so the debuggee runs.
-            # The UI disables stepping/console until the next `paused`.
-            self._emit({"type": "running"})
+        if cmd == "step":
+            self.set_step()
+        elif cmd == "next":
+            self.set_next(frame)
+        elif cmd == "return":
+            self.set_return(frame)
+        elif cmd == "continue":
+            self.set_continue()
+        else:
+            self._emit({"type": "error", "message": f"unknown command: {cmd!r}"})
+            return False
+
+        # A stepping command was issued: leave the loop so the debuggee runs.
+        # The UI disables stepping/console until the next `paused`.
+        self._emit({"type": "running"})
+        return True
+
+    def interrupt(self) -> None:
+        """Raise ``KeyboardInterrupt`` in the debuggee thread to stop a runaway
+        console cell.
+
+        Called from the *server* thread: the debuggee thread is busy inside the
+        cell and not reading ``inbound``, so a queued command would never be seen
+        until the cell finished — which is the whole problem. It fires only while
+        a cell is executing (``_executing`` guards the loop and other commands).
+
+        Two routes, because they differ in what they can wake:
+
+        * **Main-thread debuggee → a real SIGINT** (``pthread_kill``). Python runs
+          its SIGINT handler on the main thread, so this raises ``KeyboardInterrupt``
+          the way Ctrl+C does — out of a blocking C call (``time.sleep``, I/O) via
+          the syscall's ``EINTR`` *and* out of a pure-Python loop via the eval
+          breaker. This is the reliable path and covers the usual
+          ``judb.set_trace()``-in-a-script case.
+        * **Otherwise → the async-exception API** (``SetAsyncExc``). A worker
+          thread can't run Python's signal handler, so we inject the exception
+          directly. It lands at the target's next bytecode, so it stops a
+          pure-Python runaway but a call blocked in a C extension unwinds only
+          once it returns to Python. (Also the fallback where ``pthread_kill`` is
+          unavailable, e.g. Windows.)
+        """
+        tid = self._debuggee_tid
+        if tid is None or not self._executing:
             return
+        if tid == threading.main_thread().ident and hasattr(signal, "pthread_kill"):
+            signal.pthread_kill(tid, signal.SIGINT)
+        else:
+            ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                ctypes.c_long(tid), ctypes.py_object(KeyboardInterrupt)
+            )
 
     # --- outbound messages ------------------------------------------------
 
@@ -176,8 +240,34 @@ class Debugger(bdb.Bdb):
             return
         self._emit({"type": "expanded", "path": path, **node})
 
-    @staticmethod
-    def _frame_view(frame: FrameType) -> dict[str, Any]:
+    def _toggle_break(self, cmd: str, filename: object, line: object) -> None:
+        """Set/clear a line breakpoint from the source gutter, then echo the
+        file's breakpoint lines back so the gutter can redraw.
+
+        bdb keeps tracing installed after ``continue`` whenever any breakpoint
+        exists, so a breakpoint set while paused fires on the next ``continue``.
+        Runs on the debuggee thread (like ``expand``), so touching ``self.breaks``
+        is race-free.
+        """
+        if not isinstance(filename, str) or not isinstance(line, int):
+            self._emit({"type": "error", "message": "bad breakpoint request"})
+            return
+        # set_break returns an error string (e.g. "line has no code"); None on ok.
+        err = (
+            self.set_break(filename, line)
+            if cmd == "set_break"
+            else self.clear_break(filename, line)
+        )
+        message: dict[str, Any] = {
+            "type": "breakpoints",
+            "filename": filename,
+            "lines": sorted(self.get_file_breaks(filename)),
+        }
+        if err:
+            message["error"] = err
+        self._emit(message)
+
+    def _frame_view(self, frame: FrameType) -> dict[str, Any]:
         """The per-frame fields shared by ``paused`` and ``frame_selected``."""
         return {
             "filename": frame.f_code.co_filename,
@@ -185,6 +275,7 @@ class Debugger(bdb.Bdb):
             "function": frame.f_code.co_name,
             "locals": sorted(frame.f_locals),
             "source": "".join(linecache.getlines(frame.f_code.co_filename)),
+            "breakpoints": sorted(self.get_file_breaks(frame.f_code.co_filename)),
         }
 
     def _emit_cell_result(self, result: CellResult) -> None:

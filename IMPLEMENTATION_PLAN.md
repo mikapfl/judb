@@ -285,7 +285,7 @@ cell that runs in-frame and renders text/html/png, and continue/step buttons.
 *Exit:* set `breakpoint()`, browser opens, plot a paused DataFrame, step,
 continue — verified headlessly by `tests/test_phase1.py`.
 
-**Phase 2 — The four-pane app (MVP). 🚧 In progress.** Svelte+CodeMirror UI;
+**Phase 2 — The four-pane app (MVP). ✅ Done.** Svelte+CodeMirror UI;
 breakpoint gutter; variables pane (simple + expandable/lazy rich reprs); stack
 pane with frame selection (console retargets to the selected frame); multi-cell,
 editable, re-runnable console with persistence and tab-completion. Robust
@@ -304,9 +304,15 @@ is the first genuinely useful release.**
   deterministic fragment/replacement pairs, wired to CodeMirror autocomplete on
   Tab / as-you-type). Each is covered by a Python websocket test and a Playwright
   browser test.
-- **Remaining** (backend protocol additions the UI is already shaped for, see
-  `PHASE2_STACK.md` §7): `set_break`/`clear_break` (breakpoint gutter) and
-  interrupting a runaway cell.
+  `set_break`/`clear_break` (a clickable CodeMirror breakpoint gutter — a set
+  breakpoint fires on the next `continue`, since bdb keeps tracing while any
+  breakpoint exists); and `interrupt` (a runaway console cell is stopped from the
+  server thread — the queued command path can't reach the debuggee thread while
+  it's busy in the cell — via a real SIGINT when the debuggee is the main thread,
+  so it breaks blocking C calls like `time.sleep` the way Ctrl+C does, and via
+  `PyThreadState_SetAsyncExc` for a worker-thread debuggee, which only breaks
+  pure-Python execution). Each is covered by a Python websocket test and a
+  Playwright browser test.
 
 **Phase 3 — Fit & finish.** Conditional breakpoints, watch expressions, source
 across multiple files, save/load console cells (notebook export), settings,

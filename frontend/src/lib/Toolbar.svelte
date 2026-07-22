@@ -22,6 +22,9 @@
   <button disabled={!conn.paused} onclick={() => send("step")}>↳ Step</button>
   <button disabled={!conn.paused} onclick={() => send("return")}>⇤ Return</button>
   <button disabled={!conn.paused} onclick={() => send("quit")}>■ Quit</button>
+  <button class="interrupt" disabled={!conn.busy} onclick={() => conn.interrupt()}>
+    ✋ Interrupt
+  </button>
 </header>
 
 <style>
@@ -60,5 +63,10 @@
   .status.disconnected {
     background: var(--err-bg);
     color: var(--err-fg);
+  }
+  /* Enabled only while a cell is running — the runaway-cell escape hatch. */
+  .interrupt:not(:disabled) {
+    color: var(--err-fg);
+    border-color: var(--err-fg);
   }
 </style>

@@ -15,8 +15,8 @@ Read `REQUIREMENT_ANALYSIS.md` (motivation) and `IMPLEMENTATION_PLAN.md`
 changes. The plan is the source of truth for *why* things are shaped the way they
 are; its §5 defines the phases and each phase's exit criterion.
 
-**Current status: Phase 2 in progress (four-pane app).** Phase 1 (vertical slice)
-is complete: `judb.set_trace()` starts a localhost websocket server
+**Current status: Phase 2 complete (four-pane app, the MVP).** Phase 1 (vertical
+slice) is complete: `judb.set_trace()` starts a localhost websocket server
 (`judb/server.py`) and opens a browser page served from `judb/static/index.html`.
 That page is now the **built Svelte SPA** (source in `frontend/`, see below), not
 the old hand-written HTML: a four-pane layout (Source / Variables / Console / Call
@@ -25,11 +25,15 @@ CodeMirror console rendering text/html/png/svg/etc., a call-stack list, and
 continue/next/step/return/quit. `scripts/demo.py` remains a terminal driver over
 the same queues. Frame selection (`select_frame` retargets the console), lazy
 variable inspection (`expand` → a mime-bundle repr + one level of navigable
-children, rendered as a tree in the Variables pane), and tab-completion
-(`complete` → IPython completer matches wired to CodeMirror autocomplete) are
-done. **Remaining Phase 2 work** (see `PHASE2_STACK.md` §7): breakpoint gutter
-(`set_break`) and interrupting a runaway cell — both backend protocol additions
-the frontend is already shaped for.
+children, rendered as a tree in the Variables pane), tab-completion
+(`complete` → IPython completer matches wired to CodeMirror autocomplete), a
+clickable breakpoint gutter (`set_break`/`clear_break`; a set breakpoint fires on
+the next `continue`), and interrupting a runaway console cell (`interrupt`, sent
+from the server thread since the busy debuggee thread can't drain the command
+queue: a real SIGINT for a main-thread debuggee — breaks blocking C calls like
+`time.sleep`, as Ctrl+C does — else `PyThreadState_SetAsyncExc`, which only breaks
+pure-Python execution) are all done. Next up is Phase 3 (fit & finish — see
+`IMPLEMENTATION_PLAN.md` §5).
 
 ## Commands
 

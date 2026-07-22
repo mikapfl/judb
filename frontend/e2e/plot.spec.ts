@@ -106,6 +106,65 @@ test("tab-completion offers names from the paused frame", async ({ page }) => {
   }
 });
 
+test("toggle a breakpoint from the source gutter", async ({ page }) => {
+  const { proc, url } = await startDebuggee();
+
+  try {
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+
+    // Click a line in the breakpoint gutter; a red dot appears after the
+    // set_break round-trip, and clicking the same line clears it.
+    const gutterLine = page
+      .locator(".source .cm-breakpoint-gutter .cm-gutterElement:visible")
+      .first();
+    const dots = page.locator(".source .cm-breakpoint");
+
+    await expect(dots).toHaveCount(0);
+    await gutterLine.click();
+    await expect(dots).toHaveCount(1, { timeout: 10_000 });
+    await gutterLine.click();
+    await expect(dots).toHaveCount(0, { timeout: 10_000 });
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
+
+test("interrupt a runaway console cell", async ({ page }) => {
+  const { proc, url } = await startDebuggee();
+
+  try {
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+
+    // Run a cell that never returns. Python auto-indent supplies the body indent.
+    const cell = page.locator(".input .cm-content");
+    await cell.click();
+    await page.keyboard.type("while True:");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("pass");
+    await page.getByRole("button", { name: "Run cell" }).click();
+
+    // The cell is now spinning: it shows as pending and Interrupt enables.
+    const interrupt = page.getByRole("button", { name: "Interrupt" });
+    await page.locator(".history .pending").waitFor({ timeout: 10_000 });
+    await expect(interrupt).toBeEnabled();
+    // Let the debuggee thread actually enter the cell before interrupting it
+    // (the pending marker is set optimistically, before the backend starts).
+    await page.waitForTimeout(600);
+
+    await interrupt.click();
+
+    // The runaway cell unwinds as a KeyboardInterrupt and the console frees up.
+    await expect(page.locator(".history")).toContainText("KeyboardInterrupt", {
+      timeout: 15_000,
+    });
+    await expect(interrupt).toBeDisabled();
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
+
 test("clicking an outer stack frame retargets the variables pane", async ({ page }) => {
   const { proc, url } = await startDebuggee();
 

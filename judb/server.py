@@ -118,7 +118,14 @@ class DebugServer:
         try:
             async for msg in ws:
                 if msg.type == WSMsgType.TEXT:
-                    self.dbg.inbound.put(json.loads(msg.data))
+                    data = json.loads(msg.data)
+                    # `interrupt` must bypass the queue: the debuggee thread is
+                    # blocked inside the runaway cell and won't drain `inbound`
+                    # until it finishes. Deliver it straight to that thread.
+                    if data.get("cmd") == "interrupt":
+                        self.dbg.interrupt()
+                    else:
+                        self.dbg.inbound.put(data)
         finally:
             sender.cancel()
         return ws

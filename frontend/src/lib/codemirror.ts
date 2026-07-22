@@ -6,6 +6,8 @@ import { EditorState, StateEffect, StateField } from "@codemirror/state";
 import {
   Decoration,
   EditorView,
+  GutterMarker,
+  gutter,
   keymap,
   lineNumbers,
   type DecorationSet,
@@ -32,6 +34,16 @@ export const judbTheme = EditorView.theme(
     ".cm-current-line": { backgroundColor: "var(--accent-bg)" },
     ".cm-scroller": { fontFamily: "var(--font-mono)" },
     "&.cm-focused": { outline: "none" },
+    // Clickable gutter: a red dot marks a set breakpoint; every other line has a
+    // transparent slot that reveals a faint dot on hover, inviting a click.
+    ".cm-breakpoint-gutter": { width: "1.1em", cursor: "pointer" },
+    ".cm-breakpoint-gutter .cm-gutterElement": { paddingLeft: "0.15em" },
+    ".cm-breakpoint": { color: "var(--err-fg, #e06c75)" },
+    ".cm-breakpoint-slot": { color: "transparent" },
+    ".cm-breakpoint-gutter .cm-gutterElement:hover .cm-breakpoint-slot": {
+      color: "var(--err-fg, #e06c75)",
+      opacity: "0.4",
+    },
   },
   { dark: true },
 );
@@ -62,9 +74,76 @@ export const currentLineField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
-/** Read-only source view: line numbers, Python highlight, current-line field. */
-export function sourceExtensions() {
+// --- breakpoint gutter (source pane) ------------------------------------
+
+/** Replace the set of breakpoint lines (1-based) shown in the gutter. */
+export const setBreakpoints = StateEffect.define<number[]>();
+
+/** The current breakpoint lines, updated by `setBreakpoints`. */
+const breakpointLines = StateField.define<number[]>({
+  create() {
+    return [];
+  },
+  update(value, tr) {
+    for (const e of tr.effects) if (e.is(setBreakpoints)) return e.value;
+    return value;
+  },
+});
+
+function dotMarker(cls: string): GutterMarker {
+  return new (class extends GutterMarker {
+    toDOM() {
+      const span = document.createElement("span");
+      span.className = cls;
+      span.textContent = "●";
+      return span;
+    }
+  })();
+}
+
+// A red dot on a set breakpoint; a transparent slot on every other line so the
+// whole gutter column is clickable (and hints on hover — see the theme).
+const breakpointMarker = dotMarker("cm-breakpoint");
+const breakpointSlot = dotMarker("cm-breakpoint-slot");
+
+/** Clickable breakpoint gutter; a click toggles the line via `onToggle`. */
+function breakpointGutter(onToggle: (line: number) => void) {
   return [
+    breakpointLines,
+    gutter({
+      class: "cm-breakpoint-gutter",
+      // A marker on *every* line (breakpoint or a transparent slot) keeps each
+      // gutter cell wide enough to click — empty cells collapse to zero width.
+      lineMarker(view, block) {
+        const n = view.state.doc.lineAt(block.from).number;
+        return view.state.field(breakpointLines).includes(n)
+          ? breakpointMarker
+          : breakpointSlot;
+      },
+      lineMarkerChange: (update) =>
+        update.transactions.some((tr) =>
+          tr.effects.some((e) => e.is(setBreakpoints)),
+        ),
+      initialSpacer: () => breakpointSlot,
+      domEventHandlers: {
+        mousedown(view, block) {
+          onToggle(view.state.doc.lineAt(block.from).number);
+          return true;
+        },
+      },
+    }),
+  ];
+}
+
+/**
+ * Read-only source view: line numbers, Python highlight, current-line field.
+ *
+ * Pass `onToggleBreakpoint` to add a clickable breakpoint gutter; feed its
+ * dots with `setBreakpoints` effects.
+ */
+export function sourceExtensions(onToggleBreakpoint?: (line: number) => void) {
+  return [
+    ...(onToggleBreakpoint ? breakpointGutter(onToggleBreakpoint) : []),
     lineNumbers(),
     python(),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),

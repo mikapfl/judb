@@ -44,6 +44,10 @@ class Connection {
   stack = $state<StackFrame[]>([]);
   selected = $state(0);
   cells = $state<Cell[]>([]);
+  // 1-based line numbers with a breakpoint in the currently-shown file. The
+  // source pane only ever edits the displayed frame's file, so a flat list
+  // (refreshed on every frame change) is enough for the gutter.
+  breakpoints = $state<number[]>([]);
   // Lazily-fetched variable subtrees, keyed by JSON.stringify(path). Cleared
   // whenever the targeted frame changes, since locals differ per frame.
   expanded = $state<Record<string, ExpandState>>({});
@@ -55,6 +59,12 @@ class Connection {
 
   get paused(): boolean {
     return this.status === "paused";
+  }
+
+  /** A console cell is executing (a runaway cell keeps this true) — the window
+   *  in which interrupting makes sense. */
+  get busy(): boolean {
+    return this.cells.some((c) => c.pending);
   }
 
   get location(): string {
@@ -87,6 +97,26 @@ class Connection {
   selectFrame(index: number): void {
     if (!this.paused || index === this.selected) return;
     this.send({ cmd: "select_frame", index });
+  }
+
+  // --- breakpoints ----------------------------------------------------
+  //
+  // The gutter toggles a line: set it if absent, clear it if present. The
+  // backend replies with a `breakpoints` message that refreshes the list.
+  toggleBreak(line: number): void {
+    if (!this.filename) return;
+    const cmd = this.breakpoints.includes(line) ? "clear_break" : "set_break";
+    this.send({ cmd, filename: this.filename, line });
+  }
+
+  // --- interrupt ------------------------------------------------------
+  //
+  // Fire a KeyboardInterrupt into the debuggee thread to stop a runaway cell.
+  // Delivered out-of-band by the server (it bypasses the command queue the
+  // busy debuggee thread isn't draining), so no state changes here.
+  interrupt(): void {
+    if (!this.busy) return;
+    this.send({ cmd: "interrupt" });
   }
 
   // --- lazy variable inspection ---------------------------------------
@@ -168,6 +198,13 @@ class Connection {
       case "completions":
         this.#pendingCompletions.shift()?.(msg);
         break;
+      case "breakpoints":
+        // A set/clear reply for the file the source pane is showing. On a
+        // rejected line (`error`), `lines` simply omits it, so the gutter dot
+        // never appears — that missing dot is the feedback.
+        this.breakpoints = msg.lines;
+        if (msg.error) console.warn("breakpoint:", msg.error);
+        break;
       case "error":
         // Surface protocol errors as a synthetic error output on the last cell.
         this.#attachResult([
@@ -185,6 +222,7 @@ class Connection {
     this.functionName = view.function;
     this.source = view.source ?? "";
     this.locals = view.locals ?? [];
+    this.breakpoints = view.breakpoints ?? [];
   }
 
   // Cell execution is serialized on the debuggee thread, so the newest pending
