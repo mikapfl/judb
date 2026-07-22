@@ -140,7 +140,7 @@ the daemon thread's event loop. Binds to `127.0.0.1` on a random port with a
 **random token in the URL** (it executes arbitrary code — localhost-only + token
 is mandatory).
 
-### [DECISION] Frontend → mainstream shell (React) + embedded `@jupyterlab/rendermime`
+### [DECISION] Frontend → Svelte shell + embedded `@jupyterlab/rendermime`
 
 The frontend question actually has **two independent axes** that are easy to
 conflate:
@@ -180,10 +180,12 @@ console output.** It captures the highest-value, most-*separable* slice of
 Jupyter reuse (full-fidelity, script-safe rich rendering — HTML, LaTeX, vega,
 plotly) without inheriting the framework. Our console cell is simpler than a full
 Jupyter cell (CM6 editor + run button + output area), so we reuse `rendermime`
-specifically, not `@jupyterlab/cells`. **Default shell = React** (keeps the most
-doors open: rendermime embedding, `dockview`, JupyterLab `ReactWidget` interop,
-largest contributor pool); **Svelte** if a lean bundle / low-boilerplate DX for a
-small team outweighs ecosystem breadth (its main cost is a more-DIY dock layout).
+specifically, not `@jupyterlab/cells`. **Shell = Svelte** (resolved for Phase 2,
+open decision #2): its low-boilerplate DX and lean bundle fit a small team, and
+`rendermime`/CodeMirror embed via a node ref just as cleanly as in React. The
+accepted cost is a more-DIY dock layout (`svelte-splitpanes` rather than
+`dockview`); React stayed the fallback if ecosystem breadth or `ReactWidget`
+interop had outweighed that.
 
 - **CodeMirror 6** for the code pane (read-only + breakpoint gutter +
   current-line highlight) and the editable console cells. It's framework-agnostic
@@ -261,7 +263,7 @@ judb/
   inspect.py      # frame → simple-vars + lazy rich reprs for the variable pane
   server.py       # async static + websocket server; thread bridge to debugger
   protocol.py     # message dataclasses / (de)serialization
-  frontend/       # Vite/React source (embeds @jupyterlab/rendermime for output)
+  frontend/       # Vite/Svelte source (embeds @jupyterlab/rendermime for output)
   static/         # built bundle shipped in the wheel
 ```
 
@@ -280,7 +282,7 @@ cell that runs in-frame and renders text/html/png, and continue/step buttons.
 *Exit:* set `breakpoint()`, browser opens, plot a paused DataFrame, step,
 continue — verified headlessly by `tests/test_phase1.py`.
 
-**Phase 2 — The four-pane app (MVP).** React+CodeMirror UI; breakpoint gutter;
+**Phase 2 — The four-pane app (MVP).** Svelte+CodeMirror UI; breakpoint gutter;
 variables pane (simple + expandable/lazy rich reprs); stack pane with
 frame selection (console retargets to the selected frame); multi-cell,
 editable, re-runnable console with persistence and tab-completion. Robust
@@ -322,9 +324,9 @@ multi-thread/async debugging; *optional* native **JupyterLab-extension frontend*
 
 1. **MVP ambition:** a sharp hackathon-grade Phase-2 prototype, or aim from the
    start at a polished, packaged, installable tool? -> Phase-2 prototype
-2. **Frontend stack:** analysis + recommendation now in §3 — middle path
-   (mainstream shell + embedded `rendermime`), default React, Svelte if a lean
-   bundle matters more. Shell pick (React vs Svelte) still open; tied to #3. -> defer until after Phase-1
+2. **Frontend stack:** analysis in §3 — middle path (mainstream shell + embedded
+   `rendermime`). -> **Resolved: Svelte** shell + CodeMirror 6 for Phase 2
+   (lean bundle / low-boilerplate DX; accepted cost is a more-DIY dock layout).
 3. **Widget interactivity:** is static-inline matplotlib + native interactive
    plotly/altair enough for MVP, or is `%matplotlib widget` a must-have (which
    pulls a real Comm/kernel channel forward from Phase 4)? -> defer decision until we see what Phase-2 can already do

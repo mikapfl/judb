@@ -20,7 +20,7 @@ debugger) compose, and `judb.set_trace()` now starts a localhost websocket serve
 (`judb/server.py`) and opens a bare browser page (`judb/static/index.html`): code
 pane with current line, one in-frame console cell rendering text/html/png, and
 continue/next/step/quit buttons. `scripts/demo.py` remains a terminal driver over
-the same queues. Next is Phase 2 (the four-pane React+CodeMirror MVP).
+the same queues. Next is Phase 2 (the four-pane Svelte+CodeMirror MVP).
 
 ## Commands
 
