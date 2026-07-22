@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>judb</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; display: flex; flex-direction: column;
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: #1e1e22; color: #d6d6dc;
+  }
+  header {
+    display: flex; align-items: center; gap: .5rem;
+    padding: .5rem .75rem; background: #26262c; border-bottom: 1px solid #3a3a42;
+  }
+  header .loc { color: #9aa0b4; margin-left: .25rem; }
+  #status {
+    padding: .1rem .5rem; border-radius: 999px; font-size: 11px; font-weight: 600;
+    background: #3a3a42; color: #c8c8d0;
+  }
+  #status.paused { background: #2c5a2c; color: #b7f0b7; }
+  #status.running { background: #6a5320; color: #ffe0a0; }
+  #status.finished, #status.disconnected { background: #5a2c2c; color: #f0b7b7; }
+  button {
+    font: inherit; padding: .25rem .7rem; border: 1px solid #4a4a55;
+    background: #34343d; color: #e0e0e6; border-radius: 4px; cursor: pointer;
+  }
+  button:hover:not(:disabled) { background: #3f3f4a; }
+  button:disabled { opacity: .4; cursor: default; }
+  .spacer { flex: 1; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #code {
+    flex: 1; overflow: auto; padding: .5rem 0; white-space: pre;
+    border-right: 1px solid #3a3a42;
+  }
+  #code .line { padding: 0 .75rem; display: flex; gap: .75rem; }
+  #code .line .n { color: #55555f; text-align: right; min-width: 3ch; user-select: none; }
+  #code .line.cur { background: #33384a; }
+  #code .line.cur .n { color: #9ab0ff; }
+  aside { width: 44%; min-width: 24rem; display: flex; flex-direction: column; }
+  aside h2 {
+    margin: 0; padding: .4rem .75rem; font-size: 11px; text-transform: uppercase;
+    letter-spacing: .05em; color: #9aa0b4; background: #26262c;
+    border-bottom: 1px solid #3a3a42;
+  }
+  #locals { padding: .5rem .75rem; max-height: 8rem; overflow: auto; color: #c0c6d8; }
+  #locals .none { color: #666; }
+  #console { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  #cell {
+    width: 100%; height: 5rem; resize: vertical; border: none; outline: none;
+    padding: .5rem .75rem; background: #232329; color: #e6e6ec; font: inherit;
+    border-bottom: 1px solid #3a3a42;
+  }
+  #run-row { padding: .4rem .75rem; display: flex; gap: .5rem; align-items: center; }
+  #run-row .hint { color: #666; font-size: 11px; }
+  #outputs { flex: 1; overflow: auto; padding: .25rem .75rem; }
+  .out { margin: .5rem 0; }
+  .out pre { margin: 0; white-space: pre-wrap; }
+  .out.stderr pre, .out.error pre { color: #f0a0a0; }
+  .out img { max-width: 100%; background: #fff; border-radius: 4px; }
+  .out iframe { width: 100%; border: 0; background: #fff; border-radius: 4px; }
+</style>
+</head>
+<body>
+  <header>
+    <span id="status" class="disconnected">connecting</span>
+    <span class="loc" id="loc"></span>
+    <span class="spacer"></span>
+    <button id="btn-continue" disabled>▶ Continue</button>
+    <button id="btn-next" disabled>⤼ Next</button>
+    <button id="btn-step" disabled>↳ Step</button>
+    <button id="btn-quit" disabled>■ Quit</button>
+  </header>
+  <main>
+    <div id="code"></div>
+    <aside>
+      <h2>Locals</h2>
+      <div id="locals"><span class="none">—</span></div>
+      <div id="console">
+        <h2>Console — runs in the paused frame</h2>
+        <textarea id="cell" placeholder="e.g.  data        or        import matplotlib.pyplot as plt; plt.plot(data)"></textarea>
+        <div id="run-row">
+          <button id="btn-run" disabled>Run cell</button>
+          <span class="hint">Ctrl/⌘+Enter</span>
+        </div>
+        <div id="outputs"></div>
+      </div>
+    </aside>
+  </main>
+
+<script>
+const token = new URLSearchParams(location.search).get("token");
+const ws = new WebSocket(`ws://${location.host}/ws?token=${token}`);
+
+const $ = (id) => document.getElementById(id);
+const statusEl = $("status"), locEl = $("loc"), codeEl = $("code"),
+      localsEl = $("locals"), outputsEl = $("outputs"), cellEl = $("cell");
+const stepBtns = ["btn-continue", "btn-next", "btn-step", "btn-quit", "btn-run"];
+
+function setState(name, label) {
+  statusEl.className = name;
+  statusEl.textContent = label || name;
+  const paused = name === "paused";
+  stepBtns.forEach((id) => { $(id).disabled = !paused; });
+}
+
+function renderCode(source, curLine) {
+  codeEl.innerHTML = "";
+  source.split("\n").forEach((text, i) => {
+    const n = i + 1;
+    const row = document.createElement("div");
+    row.className = "line" + (n === curLine ? " cur" : "");
+    row.innerHTML = `<span class="n">${n}</span><span>${escapeHtml(text)}</span>`;
+    codeEl.appendChild(row);
+    if (n === curLine) queueMicrotask(() => row.scrollIntoView({ block: "center" }));
+  });
+}
+
+function renderLocals(names) {
+  localsEl.innerHTML = names.length
+    ? names.map(escapeHtml).join("  ")
+    : '<span class="none">(none)</span>';
+}
+
+function renderOutputs(outputs) {
+  outputsEl.innerHTML = "";
+  for (const o of outputs) {
+    const el = document.createElement("div");
+    el.className = "out";
+    const d = o.data || {};
+    if (o.kind === "stream") {
+      el.classList.add(d.name === "stderr" ? "stderr" : "stdout");
+      el.innerHTML = `<pre>${escapeHtml(d.text || "")}</pre>`;
+    } else if (o.kind === "error") {
+      el.classList.add("error");
+      el.innerHTML = `<pre>${escapeHtml(d.ename + ": " + d.evalue)}</pre>`;
+    } else if (d["image/png"]) {
+      el.innerHTML = `<img src="data:image/png;base64,${d["image/png"]}" />`;
+    } else if (d["text/html"]) {
+      // Sandboxed: script-bearing HTML (plotly/bokeh) can't touch this page.
+      const f = document.createElement("iframe");
+      f.sandbox = "allow-scripts";
+      f.srcdoc = d["text/html"];
+      el.appendChild(f);
+    } else if (d["text/plain"]) {
+      el.innerHTML = `<pre>${escapeHtml(d["text/plain"])}</pre>`;
+    }
+    outputsEl.appendChild(el);
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+
+ws.onmessage = (ev) => {
+  const msg = JSON.parse(ev.data);
+  if (msg.type === "paused") {
+    setState("paused");
+    locEl.textContent = `${msg.function}()  ${msg.filename.split("/").pop()}:${msg.lineno}`;
+    renderCode(msg.source || "", msg.lineno);
+    renderLocals(msg.locals || []);
+  } else if (msg.type === "running") {
+    setState("running", "running…");
+  } else if (msg.type === "finished") {
+    setState("finished");
+    locEl.textContent = "the debuggee has finished";
+  } else if (msg.type === "cell_result") {
+    renderOutputs(msg.outputs || []);
+  }
+};
+ws.onclose = () => setState("disconnected");
+
+const send = (obj) => ws.send(JSON.stringify(obj));
+$("btn-continue").onclick = () => send({ cmd: "continue" });
+$("btn-next").onclick = () => send({ cmd: "next" });
+$("btn-step").onclick = () => send({ cmd: "step" });
+$("btn-quit").onclick = () => send({ cmd: "quit" });
+$("btn-run").onclick = () => send({ cmd: "execute_cell", code: cellEl.value });
+cellEl.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !$("btn-run").disabled) {
+    e.preventDefault();
+    send({ cmd: "execute_cell", code: cellEl.value });
+  }
+});
+</script>
+</body>
+</html>

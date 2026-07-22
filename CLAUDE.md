@@ -15,9 +15,12 @@ Read `REQUIREMENT_ANALYSIS.md` (motivation) and `IMPLEMENTATION_PLAN.md`
 changes. The plan is the source of truth for *why* things are shaped the way they
 are; its §5 defines the phases and each phase's exit criterion.
 
-**Current status: Phase 0 complete.** The two proven halves (console + debugger)
-exist and compose; there is no websocket server or browser frontend yet — those
-are Phase 1. The `scripts/demo.py` terminal driver stands in for the browser.
+**Current status: Phase 1 complete (vertical slice).** The two halves (console +
+debugger) compose, and `judb.set_trace()` now starts a localhost websocket server
+(`judb/server.py`) and opens a bare browser page (`judb/static/index.html`): code
+pane with current line, one in-frame console cell rendering text/html/png, and
+continue/next/step/quit buttons. `scripts/demo.py` remains a terminal driver over
+the same queues. Next is Phase 2 (the four-pane React+CodeMirror MVP).
 
 ## Commands
 
@@ -55,15 +58,21 @@ debuggee and (eventually) the web server:
   use the Jupyter mime-bundle shape (dict keyed by mime type) so the future
   frontend can render them with standard tooling (`@jupyterlab/rendermime`) with
   **zero backend change**. This mime-bundle format is a load-bearing contract; keep it.
+- **`judb/server.py`** — aiohttp server on a daemon thread bridging the debugger's
+  queues to a WebSocket (browser→`inbound.put`, `outbound`→browser). Localhost +
+  random port + random URL token (mandatory: it runs arbitrary code). The seam is
+  *only* the queues; the server never executes cells. Note: `outbound.get()` is
+  drained on a **dedicated daemon thread**, not `run_in_executor` — the default
+  executor's non-daemon workers block interpreter shutdown when parked in a get()
+  that never returns.
 
 ### Two invariants that are easy to break
 
 - **Threading model.** Cells execute on the *debuggee thread* (the one that's
   paused), because touching frame state and matplotlib/thread-local state must
-  happen there. The interaction loop blocks that thread on `inbound.get()`. In
-  Phase 1 the queues get fed by a websocket server running on a *separate daemon
-  thread* (see the plan's §2 ASCII diagram). Do not move cell execution off the
-  debuggee thread.
+  happen there. The interaction loop blocks that thread on `inbound.get()`; the
+  websocket server (`server.py`) feeds those queues from a *separate daemon thread*
+  (the plan's §2 ASCII diagram). Do not move cell execution off the debuggee thread.
 - **`_capture` is module-level in `console.py`.** The hook/publisher instances are
   created by IPython, so a module global is the seam they append to. This is safe
   only because cell execution is serialized on the debuggee thread — don't

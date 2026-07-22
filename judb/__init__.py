@@ -1,9 +1,9 @@
 """judb — a browser-based visual debugger for scientific Python.
 
-Phase 0 exposes the two composed halves directly: the :class:`Console`
-(embedded IPython rich capture) and the :class:`Debugger` (bdb subclass with a
-queue-driven interaction loop). The websocket server and browser frontend arrive
-in later phases.
+The two composed halves are the :class:`Console` (embedded IPython rich capture)
+and the :class:`Debugger` (bdb subclass with a queue-driven interaction loop).
+As of Phase 1, :func:`set_trace` also starts a localhost websocket server and
+opens a browser tab, so ``breakpoint()`` drops you into the browser UI.
 """
 
 from .console import Console
@@ -13,18 +13,20 @@ from .protocol import CellResult, Output
 _active_debugger: Debugger | None = None
 
 
-def set_trace() -> Debugger:
+def set_trace(*, open_browser: bool = True) -> Debugger:
     """Start (or reuse) a debugger tracing from the caller's frame.
 
-    Phase 0 has no server yet, so this mainly exists so that tests and early
-    experiments have a stable entry point; it returns the :class:`Debugger` so
-    the caller can drive its command queues.
+    Launches the websocket server and opens a browser tab on first use (pass
+    ``open_browser=False`` to skip the tab, e.g. on a headless box). Returns the
+    :class:`Debugger` so callers/tests can also drive its command queues directly.
+    Wire it up as the ``breakpoint()`` hook via ``PYTHONBREAKPOINT=judb.set_trace``.
     """
     import sys
 
     global _active_debugger
     if _active_debugger is None:
         _active_debugger = Debugger()
+    _active_debugger.start_server(open_browser=open_browser)
     _active_debugger.set_trace(sys._getframe().f_back)
     return _active_debugger
 

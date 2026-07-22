@@ -5,6 +5,7 @@ description = "A visual debugger for datascience — pudb-style stepping with a 
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "aiohttp>=3.9",
     "ipython>=8.0",
     "matplotlib>=3.7",
     "matplotlib-inline>=0.1.6",

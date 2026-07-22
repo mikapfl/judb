@@ -273,10 +273,12 @@ judb/
 validated spikes into `console.py` and a minimal `debugger.py`. *Exit:* stop at a
 `breakpoint()`, run a cell in-frame in a pytest, see a PNG bundle in the terminal.
 
-**Phase 1 — Vertical slice, ugly but real.** Minimal websocket protocol + a
-bare HTML page: code pane with current line, a single console cell that runs
-in-frame and renders text/html/png, and continue/step buttons. *Exit:* set
-`breakpoint()`, browser opens, plot a paused DataFrame, step, continue.
+**Phase 1 — Vertical slice, ugly but real. ✅ Done.** Minimal websocket protocol
+(`judb/server.py`, aiohttp on a daemon thread, localhost + token) + a bare HTML
+page (`judb/static/index.html`): code pane with current line, a single console
+cell that runs in-frame and renders text/html/png, and continue/step buttons.
+*Exit:* set `breakpoint()`, browser opens, plot a paused DataFrame, step,
+continue — verified headlessly by `tests/test_phase1.py`.
 
 **Phase 2 — The four-pane app (MVP).** React+CodeMirror UI; breakpoint gutter;
 variables pane (simple + expandable/lazy rich reprs); stack pane with

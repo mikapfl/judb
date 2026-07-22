@@ -11,14 +11,20 @@ console cell against the paused frame; ``step``/``next``/``continue``/... set th
 appropriate bdb state and return, unblocking the debuggee.
 """
 
+import atexit
 import bdb
+import linecache
 import queue
+import time
 from collections.abc import Iterable
 from types import FrameType, TracebackType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .console import Console
 from .protocol import CellResult
+
+if TYPE_CHECKING:
+    from .server import DebugServer
 
 
 class Debugger(bdb.Bdb):
@@ -29,6 +35,7 @@ class Debugger(bdb.Bdb):
         self.outbound: queue.Queue[dict[str, Any]] = queue.Queue()
         self.current_frame: FrameType | None = None
         self._quitting = False
+        self._server: DebugServer | None = None
 
     # --- bdb hooks --------------------------------------------------------
 
@@ -62,6 +69,11 @@ class Debugger(bdb.Bdb):
                 self._emit_cell_result(result)
                 continue
 
+            if cmd == "quit":
+                self._quitting = True
+                self.set_quit()
+                return
+
             if cmd == "step":
                 self.set_step()
             elif cmd == "next":
@@ -70,14 +82,13 @@ class Debugger(bdb.Bdb):
                 self.set_return(frame)
             elif cmd == "continue":
                 self.set_continue()
-            elif cmd == "quit":
-                self._quitting = True
-                self.set_quit()
             else:
                 self._emit({"type": "error", "message": f"unknown command: {cmd!r}"})
                 continue
 
             # A stepping command was issued: leave the loop so the debuggee runs.
+            # The UI disables stepping/console until the next `paused`.
+            self._emit({"type": "running"})
             return
 
     # --- outbound messages ------------------------------------------------
@@ -93,6 +104,7 @@ class Debugger(bdb.Bdb):
                 "lineno": frame.f_lineno,
                 "function": frame.f_code.co_name,
                 "locals": sorted(frame.f_locals),
+                "source": "".join(linecache.getlines(frame.f_code.co_filename)),
                 "stack": self._stack_summary(frame),
             }
         )
@@ -123,6 +135,35 @@ class Debugger(bdb.Bdb):
             frame = frame.f_back
         stack.reverse()
         return stack
+
+    # --- server lifecycle -------------------------------------------------
+
+    def start_server(self, *, open_browser: bool = True) -> str:
+        """Start the websocket server (once) and return its tokenized URL.
+
+        The server runs on a daemon thread and only touches ``inbound``/
+        ``outbound``; cell execution stays on the debuggee thread. Idempotent —
+        repeated calls return the existing URL without reopening the browser.
+        """
+        if self._server is not None:
+            return self._server.url
+
+        from .server import DebugServer
+
+        self._server = DebugServer(self)
+        url = self._server.start()
+        atexit.register(self._notify_finished)
+        if open_browser:
+            import webbrowser
+
+            webbrowser.open(url)
+        return url
+
+    def _notify_finished(self) -> None:
+        # Tell the browser the debuggee is done, then give the server thread a
+        # brief moment to flush it over the websocket before the process exits.
+        self.outbound.put({"type": "finished"})
+        time.sleep(0.3)
 
     # --- convenience entry points ----------------------------------------
 
