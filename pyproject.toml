@@ -4,6 +4,9 @@ version = "0.1.0"
 description = "A visual debugger for datascience — pudb-style stepping with a notebook-style rich console that runs in the paused frame."
 readme = "README.md"
 requires-python = ">=3.13"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "licenses/*"]
+authors = [{ name = "Mika Pflüger" }]
 dependencies = [
     "aiohttp>=3.9",
     "ipython>=8.0",

@@ -1,0 +1,13 @@
+judb
+Copyright 2026 Mika Pflüger
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+--------------------------------------------------------------------------------
+Third-party notices
+--------------------------------------------------------------------------------
+
+judb's debugger architecture and design borrow heavily from PuDB
+(https://github.com/inducer/pudb), which is licensed under the MIT/X Consortium
+license. A copy of PuDB's license and attribution notice is included in the
+licenses/ directory (see licenses/pudb-LICENSE.txt).
