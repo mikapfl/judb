@@ -79,18 +79,24 @@ class Debugger(bdb.Bdb):
         self._selected = len(self._frames) - 1
         self._emit_paused(frame)
         while True:
+            # The idle wait is deliberately *outside* the guard below: a real
+            # terminal Ctrl+C while paused (this thread is the main thread, so
+            # SIGINT raises KeyboardInterrupt right here) must propagate into the
+            # debuggee — the only way to end the program without the judb window —
+            # rather than being swallowed.
+            msg = self.inbound.get()
             try:
-                if self._handle(frame):
+                if self._handle(frame, msg):
                     return
             except KeyboardInterrupt:
-                # A late `interrupt` (aimed at a runaway cell) that landed after
-                # the cell already returned; swallow it so it can't derail the
-                # loop or escape into the debuggee.
+                # A late `interrupt` aimed at a just-finished cell that landed in
+                # the narrow post-cell window; swallow it so it can't derail the
+                # loop. (An interrupt *during* the cell is already caught by
+                # IPython inside run_cell.)
                 continue
 
-    def _handle(self, frame: FrameType) -> bool:
+    def _handle(self, frame: FrameType, msg: dict[str, Any]) -> bool:
         """Process one inbound command. Returns True to leave the loop (resume)."""
-        msg = self.inbound.get()
         cmd = msg.get("cmd")
 
         if cmd == "execute_cell":

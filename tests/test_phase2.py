@@ -6,6 +6,7 @@ after selecting that outer frame.
 """
 
 import asyncio
+import queue
 import threading
 import time
 from typing import Any
@@ -407,6 +408,43 @@ def test_interrupt_wakes_a_blocking_call_on_the_main_thread():
     assert _has_error(result["outputs"], "KeyboardInterrupt")
     # The whole point: we broke the sleep well before its 30s, not waited it out.
     assert collected["elapsed"] < 10
+
+
+def test_terminal_ctrl_c_while_paused_reaches_the_debuggee():
+    """A real terminal Ctrl+C while paused raises KeyboardInterrupt in the
+    debuggee thread's idle ``inbound.get()``. It must propagate into the debuggee
+    (so the program can be ended without the judb window), *not* be swallowed by
+    the stray-interrupt guard — that guard only covers the cell-execution window.
+    """
+
+    class InterruptingQueue(queue.Queue[dict[str, Any]]):
+        # Stands in for a terminal Ctrl+C landing on the paused thread the instant
+        # the interaction loop reaches its idle wait.
+        def get(
+            self, block: bool = True, timeout: float | None = None
+        ) -> dict[str, Any]:
+            raise KeyboardInterrupt
+
+    dbg = Debugger()
+    dbg.inbound = InterruptingQueue()
+    caught: dict[str, Any] = {}
+
+    def debuggee() -> None:
+        try:
+            dbg.set_trace()
+            _ = 1
+        except KeyboardInterrupt:
+            caught["interrupted"] = True
+
+    thread = threading.Thread(target=debuggee)
+    thread.start()
+    # The loop emits `paused`, then hits the interrupting get().
+    assert dbg.outbound.get(timeout=15)["type"] == "paused"
+
+    thread.join(timeout=10)
+    # If the guard had swallowed it, the loop would spin forever and never join.
+    assert not thread.is_alive()
+    assert caught.get("interrupted") is True
 
 
 def test_bad_frame_index_errors():

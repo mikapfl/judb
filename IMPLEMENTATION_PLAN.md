@@ -314,6 +314,10 @@ is the first genuinely useful release.**
   pure-Python execution). Each is covered by a Python websocket test and a
   Playwright browser test.
 
+**Phase 2a – polish for MVP with bling.**
+layout, design, small usability fixes, rendermime
+also add tests for real plot interactivity
+
 **Phase 3 — Fit & finish.** Conditional breakpoints, watch expressions, source
 across multiple files, save/load console cells (notebook export), settings,
 packaging & a clean install story. *Optional/cheap:* surface the standalone SPA
