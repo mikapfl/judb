@@ -34,7 +34,7 @@ the Jupyter **mime-bundle** contract (`judb/protocol.py`). Everything below is t
   field in `frontend/package.json` + `corepack enable` — **no global install**, so
   it doesn't pollute the environment. `frontend/pnpm-lock.yaml` is the lockfile.
   (Package manager only affects the frontend-dev inner loop: end users `pip install`
-  the committed bundle with no Node at all — see §10.)
+  the pre-built bundle shipped in the sdist with no Node at all — see §10.)
 - **Bundle shape: single inlined file** — **[DECIDED]**. `vite-plugin-singlefile`
   emits one `index.html` with JS/CSS inlined; the server keeps its current one-line
   `FileResponse(static/index.html)`, no new routes. Localhost/single-user makes the
@@ -162,5 +162,7 @@ token-gated. Two dev modes:
 
 - **§8 dev workflow** → start with `vite build --watch` into `static/` (no HMR),
   add the Vite-proxy HMR mode later.
-- **§10 packaging** → `make frontend` + **commit** the built bundle now; migrate to
-  a hatchling build hook at Phase-3 packaging time.
+- **§10 packaging** → `make frontend` builds the bundle on demand; it is
+  **gitignored, not committed**. A `hatch_build.py` hatchling build hook regenerates
+  it at package-build time (wheel/sdist), and the sdist force-includes the pre-built
+  bundle so `pip install` needs no Node.

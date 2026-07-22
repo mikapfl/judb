@@ -99,7 +99,16 @@ class DebugServer:
 
     async def _handle_index(self, request: web.Request) -> web.FileResponse:
         self._check_token(request)
-        return web.FileResponse(_STATIC / "index.html")
+        index = _STATIC / "index.html"
+        if not index.is_file():
+            raise web.HTTPInternalServerError(
+                text=(
+                    "Frontend bundle not built. Run `make frontend` "
+                    "(cd frontend && pnpm run build) to generate "
+                    f"{index}."
+                )
+            )
+        return web.FileResponse(index)
 
     async def _handle_ws(self, request: web.Request) -> web.WebSocketResponse:
         self._check_token(request)

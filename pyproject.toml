@@ -22,14 +22,28 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.15.22",
     "ty>=0.0.1a1",
+    # Build backend; also a dev dep so ty can resolve hatch_build.py's imports.
+    "hatchling",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# Build the Svelte SPA into judb/static/index.html at package-build time.
+# The bundle is gitignored (not committed), so it must be force-included via
+# `artifacts` below (which un-ignores gitignored paths). See hatch_build.py.
+[tool.hatch.build.hooks.custom]
+
 [tool.hatch.build.targets.wheel]
 packages = ["judb"]
+artifacts = ["judb/static/index.html"]
+
+[tool.hatch.build.targets.sdist]
+# Ship the pre-built bundle but not the frontend/ sources, so `pip install`
+# from an sdist needs no Node/pnpm (the build hook reuses the shipped bundle).
+exclude = ["/frontend"]
+artifacts = ["judb/static/index.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

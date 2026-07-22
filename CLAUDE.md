@@ -51,8 +51,11 @@ Use **pnpm** (pinned via `packageManager` + corepack — run `corepack enable` o
 never `npm install` here). Targets:
 
 - `make frontend` — build the SPA into `judb/static/index.html` (a **single inlined
-  file** via `vite-plugin-singlefile`). The built bundle **is committed** (so
-  `pip install` needs no Node); rebuild and commit it whenever `frontend/` changes.
+  file** via `vite-plugin-singlefile`). The built bundle is **gitignored, not
+  committed** (it polluted every diff). Run `make frontend` once after checkout / any
+  `frontend/` change so the server has something to serve; a `hatch_build.py`
+  hatchling hook regenerates it at package-build time, and the sdist ships the
+  pre-built bundle so `pip install` from PyPI still needs no Node.
 - `make frontend-check` — `svelte-check` (TS + Svelte types).
 - `make frontend-test` — Vitest unit tests (renderers, store).
 - `make frontend-e2e` — Playwright browser test; needs `make frontend` first and
