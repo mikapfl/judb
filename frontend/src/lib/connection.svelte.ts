@@ -1,7 +1,17 @@
 // The single websocket-backed reactive store. Every pane reads from `conn`;
 // commands go out through `conn.send(...)`. See PHASE2_STACK.md §6.
 
-import type { Command, FrameView, Output, ServerMsg, StackFrame } from "../protocol";
+import type {
+  Command,
+  CompletionsMsg,
+  FrameView,
+  MimeBundle,
+  Output,
+  ServerMsg,
+  StackFrame,
+  VarChild,
+  VarPath,
+} from "../protocol";
 
 export type Status =
   | "connecting"
@@ -16,6 +26,14 @@ export interface Cell {
   pending: boolean;
 }
 
+/** Cached result of expanding one variable path (keyed by JSON.stringify(path)). */
+export interface ExpandState {
+  loading: boolean;
+  repr?: MimeBundle;
+  children?: VarChild[];
+  error?: string;
+}
+
 class Connection {
   status = $state<Status>("connecting");
   filename = $state("");
@@ -26,8 +44,14 @@ class Connection {
   stack = $state<StackFrame[]>([]);
   selected = $state(0);
   cells = $state<Cell[]>([]);
+  // Lazily-fetched variable subtrees, keyed by JSON.stringify(path). Cleared
+  // whenever the targeted frame changes, since locals differ per frame.
+  expanded = $state<Record<string, ExpandState>>({});
 
   #ws: WebSocket | null = null;
+  // FIFO of resolvers awaiting `completions` replies. Requests are serialized on
+  // the debuggee thread, so replies come back in the order they were sent.
+  #pendingCompletions: Array<(m: CompletionsMsg) => void> = [];
 
   get paused(): boolean {
     return this.status === "paused";
@@ -65,26 +89,84 @@ class Connection {
     this.send({ cmd: "select_frame", index });
   }
 
+  // --- lazy variable inspection ---------------------------------------
+  //
+  // A pane calls expand(path) to fetch a variable's repr + children; the result
+  // lands in `expanded` (keyed by the path) and the pane reads it back. Retrying
+  // is allowed only after an error — a loaded/loading entry is left alone.
+  expand(path: VarPath): void {
+    if (!this.paused) return;
+    const key = JSON.stringify(path);
+    const cur = this.expanded[key];
+    if (cur && !cur.error) return;
+    this.expanded[key] = { loading: true };
+    this.send({ cmd: "expand", path });
+  }
+
+  collapse(path: VarPath): void {
+    delete this.expanded[JSON.stringify(path)];
+  }
+
+  expansionOf(path: VarPath): ExpandState | undefined {
+    return this.expanded[JSON.stringify(path)];
+  }
+
+  // --- tab completion -------------------------------------------------
+  //
+  // Resolves with the backend's `completions` reply. If the debuggee is not
+  // paused (or resumes before the reply), it resolves empty so the editor's
+  // async completion source never hangs.
+  complete(code: string, cursor: number): Promise<CompletionsMsg> {
+    if (!this.paused) {
+      return Promise.resolve({ type: "completions", from: cursor, matches: [] });
+    }
+    return new Promise((resolve) => {
+      this.#pendingCompletions.push(resolve);
+      this.send({ cmd: "complete", code, cursor });
+    });
+  }
+
+  #flushCompletions(): void {
+    const pending = this.#pendingCompletions;
+    this.#pendingCompletions = [];
+    for (const resolve of pending) resolve({ type: "completions", from: 0, matches: [] });
+  }
+
   #onMessage(msg: ServerMsg): void {
     switch (msg.type) {
       case "paused":
         this.status = "paused";
         this.stack = msg.stack ?? [];
         this.selected = msg.selected ?? this.stack.length - 1;
+        this.expanded = {};
         this.#showFrame(msg);
         break;
       case "frame_selected":
         this.selected = msg.index;
+        this.expanded = {};
         this.#showFrame(msg);
         break;
       case "running":
         this.status = "running";
+        this.#flushCompletions();
         break;
       case "finished":
         this.status = "finished";
+        this.#flushCompletions();
         break;
       case "cell_result":
         this.#attachResult(msg.outputs ?? []);
+        break;
+      case "expanded":
+        this.expanded[JSON.stringify(msg.path)] = {
+          loading: false,
+          repr: msg.repr,
+          children: msg.children,
+          error: msg.error,
+        };
+        break;
+      case "completions":
+        this.#pendingCompletions.shift()?.(msg);
         break;
       case "error":
         // Surface protocol errors as a synthetic error output on the last cell.

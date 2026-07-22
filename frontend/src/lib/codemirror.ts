@@ -6,11 +6,17 @@ import { EditorState, StateEffect, StateField } from "@codemirror/state";
 import {
   Decoration,
   EditorView,
+  keymap,
   lineNumbers,
   type DecorationSet,
 } from "@codemirror/view";
 import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
 import { python } from "@codemirror/lang-python";
+import {
+  autocompletion,
+  startCompletion,
+  type CompletionSource,
+} from "@codemirror/autocomplete";
 
 /** Dark theme roughly matching tokens.css so editors sit in the panes cleanly. */
 export const judbTheme = EditorView.theme(
@@ -70,12 +76,24 @@ export function sourceExtensions() {
   ];
 }
 
-/** Editable console-cell view: Python highlight, no line-number gutter. */
-export function cellExtensions() {
-  return [
+/**
+ * Editable console-cell view: Python highlight, no line-number gutter.
+ *
+ * Pass a `completionSource` (backed by the backend `complete` round-trip) to get
+ * Tab / as-you-type completion against the paused frame's namespace.
+ */
+export function cellExtensions(completionSource?: CompletionSource) {
+  const base = [
     python(),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
     judbTheme,
     EditorView.lineWrapping,
+  ];
+  if (!completionSource) return base;
+  return [
+    ...base,
+    autocompletion({ override: [completionSource], icons: false }),
+    // Tab asks for completions (Ctrl-Space also works via the default keymap).
+    keymap.of([{ key: "Tab", run: startCompletion }]),
   ];
 }

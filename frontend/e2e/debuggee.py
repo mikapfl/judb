@@ -15,8 +15,9 @@ print(url, flush=True)  # the Playwright test reads this line
 
 def compute(data: np.ndarray) -> float:
     scale = 2.0
+    config = {"scale": scale, "tags": ["alpha", "beta"]}  # expandable in the vars pane
     dbg.set_trace()  # pauses here; innermost frame is `compute`
-    return float(data.sum()) * scale
+    return float(data.sum()) * scale * len(config)
 
 
 def main() -> None:

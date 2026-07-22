@@ -83,6 +83,14 @@ class Debugger(bdb.Bdb):
                 self._select_frame(msg.get("index"))
                 continue
 
+            if cmd == "complete":
+                self._complete(msg.get("code", ""), msg.get("cursor", 0))
+                continue
+
+            if cmd == "expand":
+                self._expand(msg.get("path"))
+                continue
+
             if cmd == "quit":
                 self._quitting = True
                 self.set_quit()
@@ -133,6 +141,40 @@ class Debugger(bdb.Bdb):
                 **self._frame_view(self._frames[index]),
             }
         )
+
+    def _complete(self, code: object, cursor: object) -> None:
+        """Tab-completion for a console cell, run against the *selected* frame."""
+        if not isinstance(code, str) or not isinstance(cursor, int):
+            self._emit({"type": "error", "message": "bad complete request"})
+            return
+        target = self._frames[self._selected]
+        replace_from, matches = self.console.complete(code, cursor, target)
+        self._emit(
+            {
+                "type": "completions",
+                "from": replace_from,
+                "matches": matches,
+            }
+        )
+
+    def _expand(self, path: object) -> None:
+        """Lazily resolve a variable ``path`` in the selected frame (see Console)."""
+        if not isinstance(path, list):
+            self._emit({"type": "error", "message": f"bad expand path: {path!r}"})
+            return
+        target = self._frames[self._selected]
+        try:
+            node = self.console.inspect(target, path)
+        except Exception as exc:  # noqa: BLE001 — surface any resolution failure to the UI
+            self._emit(
+                {
+                    "type": "expanded",
+                    "path": path,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            return
+        self._emit({"type": "expanded", "path": path, **node})
 
     @staticmethod
     def _frame_view(frame: FrameType) -> dict[str, Any]:

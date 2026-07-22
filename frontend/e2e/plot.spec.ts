@@ -60,6 +60,52 @@ test("plot a paused frame's array in the browser, then continue", async ({ page 
   }
 });
 
+test("expand a variable to fetch its children lazily", async ({ page }) => {
+  const { proc, url } = await startDebuggee();
+
+  try {
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+
+    // `config` is a dict local; expanding it fetches one level of children.
+    const config = page.locator(".vars .node", { hasText: "config" }).first();
+    await config.locator(".row").first().click();
+
+    // Its keys arrive (via an `expand` round-trip) as nested rows.
+    await expect(config).toContainText("'scale'", { timeout: 10_000 });
+    await expect(config).toContainText("'tags'");
+
+    // Drill into the nested list; its indices show.
+    const tags = config.locator(".node", { hasText: "'tags'" }).first();
+    await tags.locator(".row").first().click();
+    await expect(tags).toContainText("alpha", { timeout: 10_000 });
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
+
+test("tab-completion offers names from the paused frame", async ({ page }) => {
+  const { proc, url } = await startDebuggee();
+
+  try {
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+
+    // Type a prefix of a frame local and ask for completions with Tab.
+    const cell = page.locator(".input .cm-content");
+    await cell.click();
+    await page.keyboard.type("sca");
+    await page.keyboard.press("Tab");
+
+    // The completer (run against the paused frame) offers `scale`.
+    const tip = page.locator(".cm-tooltip-autocomplete");
+    await expect(tip).toBeVisible({ timeout: 10_000 });
+    await expect(tip).toContainText("scale");
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
+
 test("clicking an outer stack frame retargets the variables pane", async ({ page }) => {
   const { proc, url } = await startDebuggee();
 

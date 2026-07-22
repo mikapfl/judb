@@ -24,6 +24,21 @@ export interface StackFrame {
   function: string;
 }
 
+// --- lazy variable inspection (expand) ----------------------------------
+
+/** One hop from a parent object: how to descend, and the key. The first step of
+ *  a path is always `["name", <local>]`. Mirrors console.py's PathStep. */
+export type PathStep = ["name" | "attr" | "item" | "index", string | number];
+export type VarPath = PathStep[];
+
+/** One level-deep child of an expanded variable. */
+export interface VarChild {
+  key: string;
+  path: VarPath;
+  summary: string;
+  expandable: boolean;
+}
+
 // --- server -> client ---------------------------------------------------
 
 /** Per-frame fields shared by `paused` and `frame_selected`. */
@@ -66,12 +81,32 @@ export interface ErrorMsg {
   message: string;
 }
 
+/** Reply to `expand`: the value's mime bundle + one level of children, or an
+ *  error if the path could not be resolved (e.g. the local is gone). */
+export interface ExpandedMsg {
+  type: "expanded";
+  path: VarPath;
+  repr?: MimeBundle;
+  children?: VarChild[];
+  error?: string;
+}
+
+/** Reply to `complete`: `matches` are full replacements for the doc range
+ *  `[from, cursor)` (absolute offsets), the shape CodeMirror autocomplete wants. */
+export interface CompletionsMsg {
+  type: "completions";
+  from: number;
+  matches: string[];
+}
+
 export type ServerMsg =
   | PausedMsg
   | FrameSelectedMsg
   | RunningMsg
   | FinishedMsg
   | CellResultMsg
+  | ExpandedMsg
+  | CompletionsMsg
   | ErrorMsg;
 
 // --- client -> server ---------------------------------------------------
@@ -83,4 +118,6 @@ export type Command =
   | { cmd: "return" }
   | { cmd: "quit" }
   | { cmd: "execute_cell"; code: string }
-  | { cmd: "select_frame"; index: number };
+  | { cmd: "select_frame"; index: number }
+  | { cmd: "expand"; path: VarPath }
+  | { cmd: "complete"; code: string; cursor: number };

@@ -2,6 +2,7 @@
   import { EditorView, keymap } from "@codemirror/view";
   import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
   import { Prec } from "@codemirror/state";
+  import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
   import { cellExtensions } from "../lib/codemirror";
   import { conn } from "../lib/connection.svelte";
   import Output from "../lib/Output.svelte";
@@ -9,6 +10,19 @@
   let host: HTMLDivElement;
   let historyEl: HTMLDivElement;
   let view: EditorView | undefined;
+
+  // Ask the paused frame's IPython completer for matches around the cursor. The
+  // backend returns an absolute `from` offset + full replacements, which is
+  // exactly CodeMirror's CompletionResult shape.
+  async function completions(
+    context: CompletionContext,
+  ): Promise<CompletionResult | null> {
+    const before = context.matchBefore(/[\w.]+$/);
+    if (!context.explicit && !before) return null;
+    const res = await conn.complete(context.state.doc.toString(), context.pos);
+    if (!res.matches.length) return null;
+    return { from: res.from, options: res.matches.map((label) => ({ label })) };
+  }
 
   function run() {
     if (!view || !conn.paused) return;
@@ -34,7 +48,7 @@
         Prec.highest(runKey),
         history(),
         keymap.of([...defaultKeymap, ...historyKeymap]),
-        cellExtensions(),
+        cellExtensions(completions),
       ],
     });
     return () => view?.destroy();

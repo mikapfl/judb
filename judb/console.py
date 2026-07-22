@@ -18,6 +18,7 @@ the paused frame's real objects.
 
 import contextlib
 import io
+from collections.abc import Iterator
 from types import FrameType
 from typing import Any
 
@@ -40,6 +41,15 @@ from .protocol import CellResult, Output
 # than per-instance state) is the tidy seam; cell execution is serialized on the
 # debuggee thread, so a single active buffer is sufficient.
 _capture: list[Output] | None = None
+
+# Caps for lazy variable inspection (``inspect``): how many children of a
+# sequence/dict to list, and how long a child's one-line summary repr may get.
+_MAX_CHILDREN = 200
+_SUMMARY_CAP = 160
+
+# A path step from the frontend is a ``[kind, key]`` pair (JSON list). ``kind`` is
+# how to descend from the parent object; the first step is always a ``name``.
+PathStep = tuple[str, Any]
 
 
 class _CapturingDisplayHook(DisplayHook):
@@ -92,6 +102,11 @@ class Console:
         )
         matplotlib.interactive(True)
         select_figure_formats(self.shell, {"png"})
+        # Deterministic, fast completions: the rlcompleter-style path returns the
+        # fragment being replaced + full replacements (what `complete` relies on),
+        # whereas jedi is slower and, without real type info for frame locals,
+        # frequently returns nothing here.
+        self.shell.Completer.use_jedi = False
         # Frame names currently injected into user_ns, and the base values they
         # shadow (so switching frames doesn't leak names or clobber IPython's own
         # entries / the user's scratch). See _sync_frame_namespace.
@@ -168,3 +183,132 @@ class Console:
     def evaluate(self, code: str, frame: FrameType | None = None) -> Any:  # noqa: ANN401
         """Convenience for tests: run ``code`` and return its ``text/plain``."""
         return self.run_cell(code, frame).first_of("text/plain")
+
+    # --- tab completion ---------------------------------------------------
+
+    def complete(
+        self, code: str, cursor: int, frame: FrameType | None = None
+    ) -> tuple[int, list[str]]:
+        """Complete ``code`` at offset ``cursor`` against the frame's namespace.
+
+        Returns ``(replace_from, matches)`` where ``matches`` are full
+        replacements for the text spanning ``[replace_from, cursor)`` — the shape
+        CodeMirror's autocomplete wants. Completion runs against the *current*
+        line only (IPython's completer is line-oriented), so ``replace_from`` is
+        an absolute offset into ``code``.
+        """
+        if frame is not None:
+            self._sync_frame_namespace(frame)
+        cursor = max(0, min(cursor, len(code)))
+        line_start = code.rfind("\n", 0, cursor) + 1
+        line = code[line_start:cursor]
+        fragment, matches = self.shell.Completer.complete(
+            text=None, line_buffer=line, cursor_pos=len(line)
+        )
+        return cursor - len(fragment), list(matches)
+
+    # --- lazy variable inspection -----------------------------------------
+
+    def inspect(self, frame: FrameType, path: list[Any]) -> dict[str, Any]:
+        """Resolve ``path`` against ``frame`` and return its repr + children.
+
+        ``path`` starts with a ``("name", <local>)`` step and descends by
+        attribute / item / index. The returned ``repr`` is a Jupyter mime bundle
+        (so a DataFrame renders as an HTML table in the same ``<Output>`` the
+        console uses); ``children`` are one level deep, each carrying the full
+        path to expand it in turn. Resolution reads the frame's real objects
+        directly — it never runs user code or touches the shell namespace.
+        """
+        obj = self._resolve(frame, path)
+        return {
+            "repr": self._format(obj),
+            "children": self._children_of(obj, path),
+        }
+
+    @staticmethod
+    def _resolve(frame: FrameType, path: list[Any]) -> Any:  # noqa: ANN401
+        if not path:
+            raise ValueError("empty path")
+        ns = {**frame.f_globals, **frame.f_locals}
+        (kind, key), *rest = path
+        if kind != "name":
+            raise ValueError(f"path must start with a name, not {kind!r}")
+        if key not in ns:
+            raise KeyError(key)
+        obj = ns[key]
+        for step in rest:
+            obj = Console._step(obj, tuple(step))
+        return obj
+
+    @staticmethod
+    def _step(obj: Any, step: PathStep) -> Any:  # noqa: ANN401
+        kind, key = step
+        if kind == "attr":
+            return getattr(obj, key)
+        if kind in ("item", "index"):
+            return obj[key]
+        raise ValueError(f"bad path step kind: {kind!r}")
+
+    def _format(self, obj: Any) -> dict[str, Any]:  # noqa: ANN401
+        formatter = self.shell.display_formatter
+        if formatter is None:  # pragma: no cover - always set on a live shell
+            return {"text/plain": self._short_repr(obj)}
+        data, _md = formatter.format(obj)
+        data = dict(data)
+        data.setdefault("text/plain", self._short_repr(obj))
+        return data
+
+    def _children_of(self, obj: Any, parent: list[Any]) -> list[dict[str, Any]]:  # noqa: ANN401
+        children: list[dict[str, Any]] = []
+        for display, step in self._child_steps(obj):
+            try:
+                child = self._step(obj, step)
+            except Exception:  # noqa: BLE001, S112 — a broken __getitem__/property is skippable
+                continue
+            children.append(
+                {
+                    "key": display,
+                    "path": [*parent, list(step)],
+                    "summary": self._short_repr(child),
+                    "expandable": self._is_expandable(child),
+                }
+            )
+        return children
+
+    @staticmethod
+    def _child_steps(obj: Any) -> Iterator[tuple[str, PathStep]]:  # noqa: ANN401
+        if isinstance(obj, dict):
+            for k in list(obj)[:_MAX_CHILDREN]:
+                # Only JSON-round-trippable keys survive the wire as-is.
+                if type(k) is str or type(k) is int:
+                    yield repr(k), ("item", k)
+            return
+        if isinstance(obj, (list, tuple)):
+            for i in range(min(len(obj), _MAX_CHILDREN)):
+                yield str(i), ("index", i)
+            return
+        attrs = getattr(obj, "__dict__", None)
+        if isinstance(attrs, dict):
+            for name in sorted(attrs):
+                if not name.startswith("_"):
+                    yield name, ("attr", name)
+
+    @staticmethod
+    def _is_expandable(obj: Any) -> bool:  # noqa: ANN401
+        if isinstance(obj, dict):
+            return any(type(k) is str or type(k) is int for k in obj)
+        if isinstance(obj, (list, tuple)):
+            return len(obj) > 0
+        attrs = getattr(obj, "__dict__", None)
+        return isinstance(attrs, dict) and any(not k.startswith("_") for k in attrs)
+
+    @staticmethod
+    def _short_repr(obj: Any) -> str:  # noqa: ANN401
+        try:
+            text = repr(obj)
+        except Exception as exc:  # noqa: BLE001 — a broken __repr__ must not break inspection
+            text = f"<repr failed: {type(exc).__name__}: {exc}>"
+        text = " ".join(text.split())
+        if len(text) > _SUMMARY_CAP:
+            text = text[:_SUMMARY_CAP] + "…"
+        return f"{type(obj).__name__}  {text}"

@@ -23,11 +23,13 @@ the old hand-written HTML: a four-pane layout (Source / Variables / Console / Ca
 stack) with a CodeMirror source view (current-line highlight), an in-frame
 CodeMirror console rendering text/html/png/svg/etc., a call-stack list, and
 continue/next/step/return/quit. `scripts/demo.py` remains a terminal driver over
-the same queues. **Remaining Phase 2 work** (see `PHASE2_STACK.md` §7): frame
-selection (`select_frame` retargets the console), lazy variable *values*
-(`expand`), tab-completion (`complete`), breakpoint gutter (`set_break`), and
-interrupting a runaway cell — all backend protocol additions the frontend is
-already shaped for.
+the same queues. Frame selection (`select_frame` retargets the console), lazy
+variable inspection (`expand` → a mime-bundle repr + one level of navigable
+children, rendered as a tree in the Variables pane), and tab-completion
+(`complete` → IPython completer matches wired to CodeMirror autocomplete) are
+done. **Remaining Phase 2 work** (see `PHASE2_STACK.md` §7): breakpoint gutter
+(`set_break`) and interrupting a runaway cell — both backend protocol additions
+the frontend is already shaped for.
 
 ## Commands
 
@@ -71,13 +73,21 @@ debuggee and (eventually) the web server:
   append outputs to a module-level `_capture` buffer; `matplotlib` uses the inline
   backend + `select_figure_formats(shell, {"png"})` + `flush_figures()` so any
   figure a cell creates becomes an `image/png` bundle. Cells run against the paused
-  frame by injecting `frame.f_globals`/`f_locals` into the shell namespace.
+  frame by injecting `frame.f_globals`/`f_locals` into the shell namespace. Two more
+  frame-namespace services live here because they reuse the shell: `complete(code,
+  cursor, frame)` (the IPython completer, `use_jedi=False` for deterministic
+  fragment→replacement pairs) and `inspect(frame, path)` for the Variables pane —
+  it resolves a `["name",…]`/attr/item/index path against the frame's *real* objects
+  (never running user code) and returns the value's mime-bundle repr (via the shell's
+  display formatter, so a DataFrame → HTML table) plus one level of children.
 - **`judb/debugger.py`** — a `bdb.Bdb` subclass whose interaction loop is
   **driven by queues** rather than urwid keypresses (pudb's model otherwise). On
   stopping, the debuggee thread enters `interaction()`, emits a `paused` message on
   `outbound`, and blocks on `inbound.get()`. `execute_cell` runs a console cell
-  against the paused frame; `step`/`next`/`continue`/`return`/`quit` set bdb state
-  and *return* from the loop to unblock the debuggee.
+  against the paused frame; `select_frame`/`expand`/`complete` retarget/inspect/
+  complete against the *selected* frame (`self._frames[self._selected]`);
+  `step`/`next`/`continue`/`return`/`quit` set bdb state and *return* from the loop
+  to unblock the debuggee.
 - **`judb/protocol.py`** — `Output`/`CellResult` dataclasses. Outputs deliberately
   use the Jupyter mime-bundle shape (dict keyed by mime type) so the future
   frontend can render them with standard tooling (`@jupyterlab/rendermime`) with
@@ -96,7 +106,11 @@ debuggee and (eventually) the web server:
   **ordered `mime → renderer` registry** (richest-first) — adding
   `@jupyterlab/rendermime` later is one registry entry, not a rewrite. Script-bearing
   `text/html` renders in a `sandbox="allow-scripts"` iframe; images use `data:` URIs.
-  The backend contract is unchanged: same queues, same mime bundles.
+  The Variables pane is a recursive `panes/VarNode.svelte` tree over an `expand`
+  cache in the store (keyed by path, cleared on frame change); console cells get
+  tab-completion via an async CodeMirror source backed by `conn.complete()` (a
+  FIFO-correlated `complete`→`completions` round-trip). The backend contract is
+  unchanged: same queues, same mime bundles.
 
 ### Two invariants that are easy to break
 

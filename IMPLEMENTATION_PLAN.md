@@ -126,10 +126,11 @@ standard.
 
 ### [DECISION] Wire protocol → WebSocket + JSON carrying Jupyter mime bundles
 No ZMQ. A small message set:
-- server→client: `paused` (file, line, source, stack, simple vars), `running`,
-  `finished`, `cell_result` (list of mime bundles), `completions`.
+- server→client: `paused` (file, line, source, stack, local *names*), `running`,
+  `finished`, `cell_result` (list of mime bundles), `frame_selected`, `expanded`
+  (a variable's mime-bundle repr + one level of children), `completions`, `error`.
 - client→server: `command` (`step|next|continue|return|quit`),
-  `set_breakpoint`/`clear_breakpoint`, `select_frame`, `execute_cell`,
+  `set_breakpoint`/`clear_breakpoint`, `select_frame`, `execute_cell`, `expand`,
   `complete`, `interrupt`.
 Because outputs are Jupyter mime bundles, we can adopt `@jupyterlab/rendermime`
 later with zero backend change.
@@ -259,8 +260,10 @@ judb/
   __init__.py     # set_trace(), breakpoint hook, public API
   __main__.py     # `python -m judb script.py`
   debugger.py     # bdb.Bdb subclass + interaction loop (queue-driven)
-  console.py      # embedded IPython rich-capture (the proven recipe)
-  inspect.py      # frame → simple-vars + lazy rich reprs for the variable pane
+  console.py      # embedded IPython rich-capture (the proven recipe);
+                  #   also lazy variable inspection (Console.inspect: path →
+                  #   mime-bundle repr + children) and completion (Console.complete),
+                  #   since both reuse the shell's display formatter / completer
   server.py       # async static + websocket server; thread bridge to debugger
   protocol.py     # message dataclasses / (de)serialization
   frontend/       # Vite/Svelte source (embeds @jupyterlab/rendermime for output)
@@ -293,9 +296,17 @@ is the first genuinely useful release.**
   splitpanes shell; CodeMirror source (current-line) + editable in-frame console;
   `mime→renderer` output registry; call-stack list; Vitest units + a Playwright
   e2e that reproduces the Phase-1 exit criterion in a real browser.
+  `select_frame` (clicking a stack frame retargets console + inspection);
+  `expand` (lazy variable inspection — each `expand(path)` returns a mime-bundle
+  repr *and* one level of navigable children, rendered as a tree in the Variables
+  pane, so a DataFrame shows its HTML table and containers drill down without
+  eagerly serializing them); `complete` (IPython completer, jedi-off for
+  deterministic fragment/replacement pairs, wired to CodeMirror autocomplete on
+  Tab / as-you-type). Each is covered by a Python websocket test and a Playwright
+  browser test.
 - **Remaining** (backend protocol additions the UI is already shaped for, see
-  `PHASE2_STACK.md` §7): `select_frame`, lazy variable `expand`, `complete`
-  (tab-completion), `set_break`/`clear_break` (gutter), and cell interrupt.
+  `PHASE2_STACK.md` §7): `set_break`/`clear_break` (breakpoint gutter) and
+  interrupting a runaway cell.
 
 **Phase 3 — Fit & finish.** Conditional breakpoints, watch expressions, source
 across multiple files, save/load console cells (notebook export), settings,
