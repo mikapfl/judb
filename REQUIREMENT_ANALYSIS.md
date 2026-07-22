@@ -7,6 +7,14 @@ When you have a Python module, debugging is in some parts better and in some par
 
 This analysis shows that there is a clear gap: if we can enhance the debugging experience for scientific Python code in modules so that it as useful for debugging as the notebook flow, we could combine all the upsides of Python modules, without loosing the nice debuggability.
 
+Contender: PyCharm visual debugger.
+The problems with the PyCharm visual debugger are:
+* You have to use PyCharm, and PyCharm is nowadays really slow and you might not want to change editors just to have a capable debugger.
+* PyCharm's visual debugger does not handle e.g. interactive plotly plots and other stuff which uses `_repr_html_` easily.
+* It is not easy to iterate on the debugging plots, figures, etc (whatever more complex code you need to debug effectively).
+
+So we need something else.
+
 Requirements for a solution (let's call it judb):
 * The user can set breakpoints both in the code via `breakpoint()` and interactively like in visual debuggers.
 * The user can interactively step through code with the normal controls, step over, step into, continue until next breakpoint, step over line, etc. Like in visual debuggers.
