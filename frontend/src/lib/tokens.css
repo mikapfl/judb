@@ -1,0 +1,68 @@
+/* Design tokens + global reset. Dark theme (the debugger is a developer tool). */
+:root {
+  color-scheme: dark;
+
+  --bg: #1e1e22;
+  --bg-raised: #26262c;
+  --bg-inset: #232329;
+  --border: #3a3a42;
+  --border-strong: #4a4a55;
+
+  --fg: #d6d6dc;
+  --fg-dim: #9aa0b4;
+  --fg-faint: #55555f;
+
+  --accent: #9ab0ff;
+  --accent-bg: #33384a;
+
+  --ok-bg: #2c5a2c;
+  --ok-fg: #b7f0b7;
+  --warn-bg: #6a5320;
+  --warn-fg: #ffe0a0;
+  --err-bg: #5a2c2c;
+  --err-fg: #f0b7b7;
+
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-size: 13px;
+
+  --pane-header-h: 1.9rem;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font: var(--font-size) / 1.5 var(--font-mono);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+#app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+button {
+  font: inherit;
+  padding: 0.25rem 0.7rem;
+  border: 1px solid var(--border-strong);
+  background: #34343d;
+  color: #e0e0e6;
+  border-radius: 4px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) {
+  background: #3f3f4a;
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

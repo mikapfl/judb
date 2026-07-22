@@ -15,6 +15,7 @@ import atexit
 import bdb
 import linecache
 import queue
+import sys
 import time
 from collections.abc import Iterable
 from types import FrameType, TracebackType
@@ -153,6 +154,9 @@ class Debugger(bdb.Bdb):
         self._server = DebugServer(self)
         url = self._server.start()
         atexit.register(self._notify_finished)
+        # Always show the URL: the browser may not auto-open (headless / remote /
+        # SSH), and the token-in-URL is the only way in.
+        print(f"judb: debugger UI at {url}", file=sys.stderr, flush=True)
         if open_browser:
             import webbrowser
 
@@ -170,7 +174,5 @@ class Debugger(bdb.Bdb):
     def set_trace(self, frame: FrameType | None = None) -> None:
         """Start tracing from ``frame`` (defaults to the caller's frame)."""
         if frame is None:
-            import sys
-
             frame = sys._getframe().f_back
         super().set_trace(frame)

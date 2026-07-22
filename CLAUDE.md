@@ -15,12 +15,19 @@ Read `REQUIREMENT_ANALYSIS.md` (motivation) and `IMPLEMENTATION_PLAN.md`
 changes. The plan is the source of truth for *why* things are shaped the way they
 are; its §5 defines the phases and each phase's exit criterion.
 
-**Current status: Phase 1 complete (vertical slice).** The two halves (console +
-debugger) compose, and `judb.set_trace()` now starts a localhost websocket server
-(`judb/server.py`) and opens a bare browser page (`judb/static/index.html`): code
-pane with current line, one in-frame console cell rendering text/html/png, and
-continue/next/step/quit buttons. `scripts/demo.py` remains a terminal driver over
-the same queues. Next is Phase 2 (the four-pane Svelte+CodeMirror MVP).
+**Current status: Phase 2 in progress (four-pane app).** Phase 1 (vertical slice)
+is complete: `judb.set_trace()` starts a localhost websocket server
+(`judb/server.py`) and opens a browser page served from `judb/static/index.html`.
+That page is now the **built Svelte SPA** (source in `frontend/`, see below), not
+the old hand-written HTML: a four-pane layout (Source / Variables / Console / Call
+stack) with a CodeMirror source view (current-line highlight), an in-frame
+CodeMirror console rendering text/html/png/svg/etc., a call-stack list, and
+continue/next/step/return/quit. `scripts/demo.py` remains a terminal driver over
+the same queues. **Remaining Phase 2 work** (see `PHASE2_STACK.md` §7): frame
+selection (`select_frame` retargets the console), lazy variable *values*
+(`expand`), tab-completion (`complete`), breakpoint gutter (`set_break`), and
+interrupting a runaway cell — all backend protocol additions the frontend is
+already shaped for.
 
 ## Commands
 
@@ -35,6 +42,23 @@ the same queues. Next is Phase 2 (the four-pane Svelte+CodeMirror MVP).
 
 Use `uv` for everything (deps live in `pyproject.toml`; `uv sync` to install  - or use `uv add` directly).
 pre-commit is installed as a git hook, so commits are gated on the same checks as `make lint`.
+
+### Frontend (`frontend/`, Svelte 5 + Vite + pnpm)
+
+Use **pnpm** (pinned via `packageManager` + corepack — run `corepack enable` once;
+never `npm install` here). Targets:
+
+- `make frontend` — build the SPA into `judb/static/index.html` (a **single inlined
+  file** via `vite-plugin-singlefile`). The built bundle **is committed** (so
+  `pip install` needs no Node); rebuild and commit it whenever `frontend/` changes.
+- `make frontend-check` — `svelte-check` (TS + Svelte types).
+- `make frontend-test` — Vitest unit tests (renderers, store).
+- `make frontend-e2e` — Playwright browser test; needs `make frontend` first and
+  a one-time `cd frontend && pnpm exec playwright install chromium`.
+- `make frontend-install` — `pnpm install`.
+
+The stack and its resolved decisions live in `PHASE2_STACK.md` — read it before
+changing the frontend's shape.
 
 ## Architecture — the crux
 
@@ -65,6 +89,14 @@ debuggee and (eventually) the web server:
   drained on a **dedicated daemon thread**, not `run_in_executor` — the default
   executor's non-daemon workers block interpreter shutdown when parked in a get()
   that never returns.
+- **`frontend/`** — the Svelte 5 SPA (build-only source; the *built* output lives
+  in `judb/static/`). `src/lib/connection.svelte.ts` is the one websocket-backed
+  runes store every pane reads; `src/protocol.ts` hand-mirrors `judb/protocol.py`
+  (keep them in sync). Rich output goes through `src/lib/Output.svelte`, an
+  **ordered `mime → renderer` registry** (richest-first) — adding
+  `@jupyterlab/rendermime` later is one registry entry, not a rewrite. Script-bearing
+  `text/html` renders in a `sandbox="allow-scripts"` iframe; images use `data:` URIs.
+  The backend contract is unchanged: same queues, same mime bundles.
 
 ### Two invariants that are easy to break
 

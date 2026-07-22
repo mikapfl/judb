@@ -282,12 +282,20 @@ cell that runs in-frame and renders text/html/png, and continue/step buttons.
 *Exit:* set `breakpoint()`, browser opens, plot a paused DataFrame, step,
 continue — verified headlessly by `tests/test_phase1.py`.
 
-**Phase 2 — The four-pane app (MVP).** Svelte+CodeMirror UI; breakpoint gutter;
-variables pane (simple + expandable/lazy rich reprs); stack pane with
-frame selection (console retargets to the selected frame); multi-cell,
+**Phase 2 — The four-pane app (MVP). 🚧 In progress.** Svelte+CodeMirror UI;
+breakpoint gutter; variables pane (simple + expandable/lazy rich reprs); stack
+pane with frame selection (console retargets to the selected frame); multi-cell,
 editable, re-runnable console with persistence and tab-completion. Robust
 capture (stdout streaming, error tracebacks, interrupt a runaway cell). **This
 is the first genuinely useful release.**
+- **Done:** the `frontend/` Svelte 5 + Vite + pnpm SPA scaffold (stack settled in
+  `PHASE2_STACK.md`), building a single inlined `judb/static/index.html`; four-pane
+  splitpanes shell; CodeMirror source (current-line) + editable in-frame console;
+  `mime→renderer` output registry; call-stack list; Vitest units + a Playwright
+  e2e that reproduces the Phase-1 exit criterion in a real browser.
+- **Remaining** (backend protocol additions the UI is already shaped for, see
+  `PHASE2_STACK.md` §7): `select_frame`, lazy variable `expand`, `complete`
+  (tab-completion), `set_break`/`clear_break` (gutter), and cell interrupt.
 
 **Phase 3 — Fit & finish.** Conditional breakpoints, watch expressions, source
 across multiple files, save/load console cells (notebook export), settings,
