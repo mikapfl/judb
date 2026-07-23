@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help test lint frontend frontend-install frontend-check frontend-test frontend-e2e
+.PHONY: help dev test lint frontend frontend-install frontend-check frontend-test frontend-e2e
 
 help:  ## Show this help
 	@echo "judb — available make targets:"
@@ -8,6 +8,10 @@ help:  ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
 		| sort \
 		| awk 'BEGIN {FS = ":.*?## "} {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
+
+dev:  ## Set up a full dev environment (deps + extras + pre-commit hook)
+	uv sync --all-extras
+	uv run pre-commit install
 
 test:  ## Run all Python tests
 	uv run pytest
