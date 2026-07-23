@@ -370,6 +370,13 @@ packaging & a clean install story. *Optional/cheap:* surface the standalone SPA
 inside JupyterLab via `jupyter-server-proxy` (near-zero effort, gets us "inside
 Lab" for demos without the labextension toolchain).
 
+**→ See `PHASE3_PLAN.md` for the detailed, ordered plan** (two waves — *ship
+first* then *deepen*), grounded in the Phase-2a codebase. Wave A: install story
+(incl. moving the misplaced `pre-commit` runtime dep), the `python -m judb` /
+`pytest --pdbcls` entry points, real-program robustness, docs + a PyPI `0.1.0`.
+Wave B: conditional/temporary breakpoints, break-on-exception + post-mortem,
+watch expressions, multi-file source, a minimal settings layer.
+
 **Phase 3a – saved debug expressions.** Add a way to save + load cell sources
 close to the source, so repeated debugging can re-use cells. Things to consider
 (not yet decided what to implement):
