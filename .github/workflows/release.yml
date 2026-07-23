@@ -15,13 +15,75 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: build + verify artifacts
+  prepare:
+    name: version + changelog
     runs-on: ubuntu-latest
+    # The only job that writes to the repository: it commits the built
+    # changelog back. Kept separate so the heavier build/publish jobs stay
+    # read-only.
+    permissions:
+      contents: write
     outputs:
       version: ${{ steps.meta.outputs.version }}
+      sha: ${{ steps.meta.outputs.sha }}
     steps:
       - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Resolve version and build the changelog
+        id: meta
+        run: |
+          set -euo pipefail
+          version=$(python3 scripts/release_notes.py version)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing judb $version to ${{ inputs.target }}"
+
+          # A Test-PyPI dry run must not consume fragments or touch the repo:
+          # they are still needed for the real release.
+          if [ "${{ inputs.target }}" != "pypi" ]; then
+            echo "Dry run — leaving changelog fragments untouched."
+            echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Idempotent: a re-run after a mid-release failure must not try to
+          # build a changelog that already exists.
+          if python3 scripts/release_notes.py notes >/dev/null 2>&1; then
+            echo "CHANGELOG.md already has a section for $version — reusing it."
+            echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Refuse to release with nothing to tell users. `README.md` is the
+          # instructions file in changelog.d/, not a fragment.
+          if [ -z "$(find changelog.d -name '*.md' ! -name 'README.md' -print -quit)" ]; then
+            echo "::error::No changelog fragments, and CHANGELOG.md has no section for $version."
+            exit 1
+          fi
+
+          # Consumes the fragments (towncrier `git rm`s them) and writes the
+          # section that becomes the draft release body.
+          uv run towncrier build --yes --version "$version"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "docs: changelog for v$version"
+          git push origin "HEAD:${{ github.ref_name }}"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build + verify artifacts
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      # Build from the commit that carries the freshly-built changelog, so the
+      # artifacts, the tag and the release notes all describe the same tree.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
@@ -38,19 +100,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
         working-directory: frontend
 
-      - name: Read version (and require changelog notes for a real release)
-        id: meta
-        run: |
-          version=$(python3 scripts/release_notes.py version)
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Releasing judb $version to ${{ inputs.target }}"
-          # Fail *before* anything is uploaded if `make changelog` was not run:
-          # the draft GitHub release is built from this section. Test-PyPI dry
-          # runs are exempt, since they often happen mid-cycle.
-          if [ "${{ inputs.target }}" = "pypi" ]; then
-            python3 scripts/release_notes.py notes > /dev/null
-          fi
-
       # Never ship an untested tree, even though CI covers main.
       - run: uv sync
       - run: uv run pytest -q
@@ -59,7 +108,6 @@ jobs:
       # runs a headless pause -> plot -> continue round-trip against it.
       - run: ./scripts/smoke_install.sh
 
-      - run: uv run python -c "import pathlib; print('\n'.join(str(p) for p in pathlib.Path('dist').iterdir()))"
       - uses: actions/upload-artifact@v7
         with:
           name: dist
@@ -95,7 +143,7 @@ jobs:
 
   github-release:
     name: tag + draft GitHub release
-    needs: [build, publish]
+    needs: [prepare, publish]
     # Real releases only: a Test-PyPI dry run must not tag the repository.
     if: inputs.target == 'pypi'
     runs-on: ubuntu-latest
@@ -103,10 +151,12 @@ jobs:
       # Push the tag and create the release.
       contents: write
     env:
-      VERSION: ${{ needs.build.outputs.version }}
+      VERSION: ${{ needs.prepare.outputs.version }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
       - uses: actions/download-artifact@v8
         with:
           name: dist
@@ -117,6 +167,7 @@ jobs:
       # commit that produced the uploaded artifacts pinned right away.
       - name: Tag the release
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "v$VERSION" -m "judb $VERSION"
@@ -127,6 +178,7 @@ jobs:
       # never drift apart. The built wheel + sdist are attached.
       - name: Create the draft GitHub release
         run: |
+          set -euo pipefail
           python3 scripts/release_notes.py notes > /tmp/notes.md
           gh release create "v$VERSION" \
             --draft \

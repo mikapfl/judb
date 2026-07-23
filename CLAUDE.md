@@ -38,7 +38,7 @@ pure-Python execution) are all done. Next up is Phase 3 (fit & finish — see
 
 - `make test` — run all tests (`uv run pytest`).
 - `make lint` — run all pre-commit hooks across the repo (ruff check+format, ty, uv-lock).
-- `make changelog-draft` — preview release notes; `make changelog` builds them (release only).
+- `make changelog-draft` — preview release notes (consumes nothing; CI builds the real ones).
 - `make help` — list make targets (self-documenting from `## ` comments).
 - `uv run pytest tests/test_server.py::test_plot_paused_frame_over_websocket` — run a single test.
 - `uv run pytest -s` — run tests showing the captured PNG-byte-count prints.
@@ -62,10 +62,12 @@ install each into a fresh venv, round-trip it).
 
 **Changelog.** Every user-visible change adds a fragment to `changelog.d/`
 (`<id>.<type>.md`, types `added`/`changed`/`fixed`/`removed`/`docs`, or an empty
-`<pr>.misc.md` for changes with nothing to tell users). CI enforces this on
-PRs via `towncrier check`. `towncrier build` collates them into `CHANGELOG.md`
-at release time and deletes the fragments — so branches in flight never conflict
-over the changelog. See `changelog.d/README.md`.
+`<pr>.misc.md` for changes with nothing to tell users). CI enforces this on PRs
+via `towncrier check`. Fragments never collide, so branches in flight don't
+fight over the changelog. **You never run `make changelog` by hand** — the
+release workflow runs it for a `pypi` release and commits the result back;
+`make changelog-draft` is a preview that consumes nothing. See
+`changelog.d/README.md` and `RELEASING.md`.
 
 **Version.** Single source of truth is `__version__` in `judb/__init__.py`;
 hatchling and towncrier both read it, so a release bumps exactly one line.

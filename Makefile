@@ -25,7 +25,7 @@ license:  ## Check dependency license compliance (pylic)
 changelog-draft:  ## Preview the release notes (keeps the fragments)
 	uv run towncrier build --draft
 
-changelog:  ## Build CHANGELOG.md from changelog.d/ and remove the fragments
+changelog:  ## Build CHANGELOG.md from changelog.d/ (normally CI's job; see RELEASING.md)
 	uv run towncrier build --yes
 
 smoke:  ## Build wheel+sdist and verify a fresh install round-trips (packaging test)
