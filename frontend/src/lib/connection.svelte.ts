@@ -21,9 +21,14 @@ export type Status =
   | "disconnected";
 
 export interface Cell {
+  /** Stable identity so a cell keeps its editor across reorder/insert/delete. */
+  id: number;
   code: string;
   outputs: Output[];
   pending: boolean;
+  /** Run order shown as `[n]` (like a notebook's execution count); null if the
+   *  cell has never been run. */
+  count: number | null;
 }
 
 /** Cached result of expanding one variable path (keyed by JSON.stringify(path)). */
@@ -43,7 +48,10 @@ class Connection {
   locals = $state<string[]>([]);
   stack = $state<StackFrame[]>([]);
   selected = $state(0);
-  cells = $state<Cell[]>([]);
+  // The notebook: an ordered list of editable cells, starting with one empty
+  // cell. Cells persist across steps (you build up a notebook and re-run cells
+  // as you step), so this is never cleared on pause.
+  cells = $state<Cell[]>([{ id: 0, code: "", outputs: [], pending: false, count: null }]);
   // 1-based line numbers with a breakpoint in the currently-shown file. The
   // source pane only ever edits the displayed frame's file, so a flat list
   // (refreshed on every frame change) is enough for the gutter.
@@ -56,6 +64,15 @@ class Connection {
   // FIFO of resolvers awaiting `completions` replies. Requests are serialized on
   // the debuggee thread, so replies come back in the order they were sent.
   #pendingCompletions: Array<(m: CompletionsMsg) => void> = [];
+  // Next cell id to hand out (0 is the initial cell) and the running execution
+  // count shown as `[n]`.
+  #nextCellId = 1;
+  #execCount = 0;
+  // FIFO of cell ids awaiting a `cell_result`. Execution is serialized on the
+  // debuggee thread, so results come back in send order — this correlates each
+  // result to the cell that asked for it (any cell can be re-run, not just the
+  // newest), independent of the notebook's current order.
+  #pendingExec: number[] = [];
 
   get paused(): boolean {
     return this.status === "paused";
@@ -88,9 +105,55 @@ class Connection {
     this.#ws?.send(JSON.stringify(cmd));
   }
 
-  execute(code: string): void {
-    if (!code.trim()) return;
-    this.cells.push({ code, outputs: [], pending: true });
+  // --- notebook cells -------------------------------------------------
+  //
+  // The console is a notebook: cells are editable, re-runnable, and can be
+  // added / deleted / reordered. Structural edits (add/delete/move) are purely
+  // client-side; only `runCell` talks to the backend.
+
+  /** Insert a new empty cell after `afterId` (or at the end) and return its id. */
+  addCell(afterId?: number): number {
+    const cell: Cell = {
+      id: this.#nextCellId++,
+      code: "",
+      outputs: [],
+      pending: false,
+      count: null,
+    };
+    const at = afterId == null ? -1 : this.cells.findIndex((c) => c.id === afterId);
+    if (at < 0) this.cells.push(cell);
+    else this.cells.splice(at + 1, 0, cell);
+    return cell.id;
+  }
+
+  /** Delete a cell, always keeping at least one (like a notebook). */
+  deleteCell(id: number): void {
+    const i = this.cells.findIndex((c) => c.id === id);
+    if (i < 0) return;
+    this.cells.splice(i, 1);
+    if (this.cells.length === 0) this.addCell();
+  }
+
+  /** Move a cell one slot up (dir -1) or down (dir +1). */
+  moveCell(id: number, dir: -1 | 1): void {
+    const i = this.cells.findIndex((c) => c.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= this.cells.length) return;
+    const [cell] = this.cells.splice(i, 1);
+    this.cells.splice(j, 0, cell);
+  }
+
+  /** Run a cell's current code against the paused frame. Records the code, marks
+   *  the cell pending, and correlates the eventual result back to *this* cell. */
+  runCell(id: number, code: string): void {
+    const cell = this.cells.find((c) => c.id === id);
+    if (!cell) return;
+    cell.code = code; // persist the latest edit even if we can't run it
+    if (!this.paused || !code.trim()) return;
+    cell.pending = true;
+    cell.outputs = [];
+    cell.count = ++this.#execCount;
+    this.#pendingExec.push(id);
     this.send({ cmd: "execute_cell", code });
   }
 
@@ -183,6 +246,9 @@ class Connection {
       case "finished":
         this.status = "finished";
         this.#flushCompletions();
+        // Nothing will complete a still-spinning cell now; release them.
+        this.#pendingExec = [];
+        for (const cell of this.cells) cell.pending = false;
         break;
       case "cell_result":
         this.#attachResult(msg.outputs ?? []);
@@ -225,15 +291,15 @@ class Connection {
     this.breakpoints = view.breakpoints ?? [];
   }
 
-  // Cell execution is serialized on the debuggee thread, so the newest pending
-  // cell is the one this result belongs to.
+  // Attach a result to the cell that requested it (FIFO — see `#pendingExec`).
+  // A stray result (e.g. a protocol `error` with nothing queued) falls back to
+  // the last cell so it isn't silently dropped.
   #attachResult(outputs: Output[]): void {
-    for (let i = this.cells.length - 1; i >= 0; i--) {
-      if (this.cells[i].pending) {
-        this.cells[i].outputs = outputs;
-        this.cells[i].pending = false;
-        return;
-      }
+    const id = this.#pendingExec.shift() ?? this.cells.at(-1)?.id;
+    const cell = id == null ? undefined : this.cells.find((c) => c.id === id);
+    if (cell) {
+      cell.outputs = outputs;
+      cell.pending = false;
     }
   }
 }

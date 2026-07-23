@@ -38,14 +38,14 @@ test("plot a paused frame's array in the browser, then continue", async ({ page 
     await expect(page.locator(".source")).toContainText("np.linspace");
     await expect(page.locator(".vars")).toContainText("data");
 
-    // Type a plot cell into the console editor (the editable CodeMirror) and run.
-    const cell = page.locator(".input .cm-content");
+    // Type a plot cell into the notebook cell (the editable CodeMirror) and run.
+    const cell = page.locator(".cell .cm-content").first();
     await cell.click();
     await page.keyboard.type("import matplotlib.pyplot as plt; plt.plot(data)");
-    await page.getByRole("button", { name: "Run cell" }).click();
+    await page.getByRole("button", { name: "Run cell" }).first().click();
 
     // The paused frame's `data` renders as an inline PNG.
-    const img = page.locator(".history img");
+    const img = page.locator(".cell img");
     await expect(img).toBeVisible({ timeout: 15_000 });
     await expect(img).toHaveAttribute("src", /^data:image\/png;base64,/);
 
@@ -92,7 +92,7 @@ test("tab-completion offers names from the paused frame", async ({ page }) => {
     await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
 
     // Type a prefix of a frame local and ask for completions with Tab.
-    const cell = page.locator(".input .cm-content");
+    const cell = page.locator(".cell .cm-content").first();
     await cell.click();
     await page.keyboard.type("sca");
     await page.keyboard.press("Tab");
@@ -138,16 +138,16 @@ test("interrupt a runaway console cell", async ({ page }) => {
     await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
 
     // Run a cell that never returns. Python auto-indent supplies the body indent.
-    const cell = page.locator(".input .cm-content");
+    const cell = page.locator(".cell .cm-content").first();
     await cell.click();
     await page.keyboard.type("while True:");
     await page.keyboard.press("Enter");
     await page.keyboard.type("pass");
-    await page.getByRole("button", { name: "Run cell" }).click();
+    await page.getByRole("button", { name: "Run cell" }).first().click();
 
     // The cell is now spinning: it shows as pending and Interrupt enables.
     const interrupt = page.getByRole("button", { name: "Interrupt" });
-    await page.locator(".history .pending").waitFor({ timeout: 10_000 });
+    await page.locator(".cell .pending").waitFor({ timeout: 10_000 });
     await expect(interrupt).toBeEnabled();
     // Let the debuggee thread actually enter the cell before interrupting it
     // (the pending marker is set optimistically, before the backend starts).
@@ -156,7 +156,7 @@ test("interrupt a runaway console cell", async ({ page }) => {
     await interrupt.click();
 
     // The runaway cell unwinds as a KeyboardInterrupt and the console frees up.
-    await expect(page.locator(".history")).toContainText("KeyboardInterrupt", {
+    await expect(page.locator(".cells")).toContainText("KeyboardInterrupt", {
       timeout: 15_000,
     });
     await expect(interrupt).toBeDisabled();

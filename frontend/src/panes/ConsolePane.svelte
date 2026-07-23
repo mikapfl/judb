@@ -1,131 +1,90 @@
 <script lang="ts">
-  import { EditorView, keymap } from "@codemirror/view";
-  import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-  import { Prec } from "@codemirror/state";
-  import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
-  import { cellExtensions } from "../lib/codemirror";
+  import { tick } from "svelte";
   import { conn } from "../lib/connection.svelte";
-  import Output from "../lib/Output.svelte";
+  import NotebookCell from "./NotebookCell.svelte";
 
-  let host: HTMLDivElement;
-  let historyEl: HTMLDivElement;
-  let view: EditorView | undefined;
+  // Component instances by cell id, so we can focus a specific cell's editor
+  // after inserting one or running-and-advancing (Jupyter's Shift+Enter).
+  let refs = $state<Record<number, NotebookCell | undefined>>({});
 
-  // Ask the paused frame's IPython completer for matches around the cursor. The
-  // backend returns an absolute `from` offset + full replacements, which is
-  // exactly CodeMirror's CompletionResult shape.
-  async function completions(
-    context: CompletionContext,
-  ): Promise<CompletionResult | null> {
-    const before = context.matchBefore(/[\w.]+$/);
-    if (!context.explicit && !before) return null;
-    const res = await conn.complete(context.state.doc.toString(), context.pos);
-    if (!res.matches.length) return null;
-    return { from: res.from, options: res.matches.map((label) => ({ label })) };
+  async function focusCell(id: number): Promise<void> {
+    await tick();
+    refs[id]?.focus();
   }
 
-  function run() {
-    if (!view || !conn.paused) return;
-    const code = view.state.doc.toString();
-    if (!code.trim()) return;
-    conn.execute(code);
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "" } });
+  function runAdvance(id: number, code: string): void {
+    conn.runCell(id, code);
+    if (!conn.paused) return;
+    const i = conn.cells.findIndex((c) => c.id === id);
+    // Move to the next cell, creating one if this was the last (like Jupyter).
+    const nextId = i === conn.cells.length - 1 ? conn.addCell(id) : conn.cells[i + 1].id;
+    void focusCell(nextId);
   }
 
-  $effect(() => {
-    const runKey = keymap.of([
-      {
-        key: "Mod-Enter",
-        run: () => {
-          run();
-          return true;
-        },
-      },
-    ]);
-    view = new EditorView({
-      parent: host,
-      extensions: [
-        Prec.highest(runKey),
-        history(),
-        keymap.of([...defaultKeymap, ...historyKeymap]),
-        cellExtensions(completions),
-      ],
-    });
-    return () => view?.destroy();
-  });
+  function addBelow(id: number): void {
+    void focusCell(conn.addCell(id));
+  }
 
-  // Keep the newest cell / result in view.
-  $effect(() => {
-    conn.cells.length;
-    conn.cells.at(-1)?.pending;
-    if (historyEl) queueMicrotask(() => (historyEl.scrollTop = historyEl.scrollHeight));
-  });
+  function addAtEnd(): void {
+    void focusCell(conn.addCell());
+  }
 </script>
 
-<div class="console">
-  <div class="history" bind:this={historyEl}>
-    {#each conn.cells as cell, i (i)}
-      <div class="cell">
-        <pre class="cell-code">{cell.code}</pre>
-        {#if cell.pending}
-          <div class="pending">running…</div>
-        {:else}
-          {#each cell.outputs as out, j (j)}
-            <Output output={out} />
-          {/each}
-        {/if}
-      </div>
+<div class="notebook">
+  <div class="cells">
+    {#each conn.cells as cell, i (cell.id)}
+      <NotebookCell
+        bind:this={refs[cell.id]}
+        {cell}
+        first={i === 0}
+        last={i === conn.cells.length - 1}
+        onrun={(code) => conn.runCell(cell.id, code)}
+        onrunAdvance={(code) => runAdvance(cell.id, code)}
+        ondelete={() => conn.deleteCell(cell.id)}
+        onmoveUp={() => conn.moveCell(cell.id, -1)}
+        onmoveDown={() => conn.moveCell(cell.id, 1)}
+        onaddBelow={() => addBelow(cell.id)}
+      />
     {/each}
   </div>
-  <div class="input">
-    <div class="editor" bind:this={host}></div>
-    <div class="run-row">
-      <button onclick={run} disabled={!conn.paused}>Run cell</button>
-      <span class="hint">⌃/⌘+Enter · runs in the paused frame</span>
-    </div>
+  <div class="footer">
+    <button class="add-cell" onclick={addAtEnd}>＋ Add cell</button>
+    <span class="hint">⌘/⌃+Enter run · ⇧+Enter run &amp; next · runs in the paused frame</span>
   </div>
 </div>
 
 <style>
-  .console {
+  .notebook {
     display: flex;
     flex-direction: column;
     height: 100%;
     min-height: 0;
   }
-  .history {
+  .cells {
     flex: 1;
     overflow: auto;
-    padding: 0.35rem 0.6rem;
+    padding: 0.5rem 0 0.2rem;
     min-height: 0;
   }
-  .cell {
-    border-left: 2px solid var(--border);
-    padding-left: 0.5rem;
-    margin-bottom: 0.6rem;
-  }
-  .cell-code {
-    margin: 0 0 0.2rem;
-    color: var(--fg-dim);
-    white-space: pre-wrap;
-  }
-  .pending {
-    color: var(--warn-fg);
-  }
-  .input {
-    border-top: 1px solid var(--border);
-    background: var(--bg-inset);
-  }
-  .editor {
-    max-height: 10rem;
-    overflow: auto;
-    padding: 0.35rem 0.6rem;
-  }
-  .run-row {
+  .footer {
     display: flex;
     align-items: center;
     gap: 0.6rem;
     padding: 0.35rem 0.6rem;
+    border-top: 1px solid var(--border);
+    background: var(--bg-inset);
+  }
+  .add-cell {
+    padding: 0.2rem 0.6rem;
+    font-size: 12px;
+    background: var(--btn-bg);
+    color: var(--btn-fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .add-cell:hover {
+    background: var(--btn-bg-hover);
   }
   .hint {
     color: var(--fg-faint);
