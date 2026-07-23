@@ -67,8 +67,16 @@ pytest --pdb --pdbcls=judb:Debugger
 ```
 
 Inspect the assertion's operands, plot the offending array, poke at locals — all
-in the frame where the test blew up. Hit Continue to move on. (`--trace` and
-`breakpoint()` under pytest aren't wired to the UI yet.)
+in the frame where the test blew up. Hit Continue to move on.
+
+With `--pdbcls=judb:Debugger` set, pytest's other entry points reach judb too —
+`--trace` breaks at the first line of every test, and a `breakpoint()` inside a
+test opens the UI there:
+
+```bash
+pytest --trace --pdbcls=judb:Debugger      # break at the start of each test
+pytest --pdbcls=judb:Debugger              # honour breakpoint() in a test
+```
 
 Prefer a ready-made demo? From a checkout:
 

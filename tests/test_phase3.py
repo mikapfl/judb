@@ -14,6 +14,11 @@
 * ``test_python_m_judb_runs_script`` / ``…_runs_module`` — the ``python -m judb``
   entry point in both forms, as real subprocesses (which is the only way to
   catch the ``__main__``-namespace-clearing hazard the script form has).
+* ``test_pytest_trace_breaks_at_the_start_of_a_test`` and
+  ``test_pytest_breakpoint_under_pdbcls`` — pytest's other two routes into a
+  ``--pdbcls`` class. Both arrive via the *live* path (``runcall`` and
+  ``set_trace``), which paused with no server — and so no way in — until
+  ``interaction`` started the UI unconditionally.
 """
 
 import asyncio
@@ -359,3 +364,75 @@ def test_python_m_judb_runs_module(tmp_path: Path):
     finally:
         if proc.poll() is None:
             proc.kill()
+
+
+def _run_pytest_paused(
+    tmp_path: Path, body: str, *extra_args: str
+) -> tuple[dict[str, Any], int, str]:
+    """Run a one-test pytest subprocess under judb, drive its first pause, and
+    return (paused message, exit code, combined output)."""
+    testfile = tmp_path / "test_under_judb.py"
+    testfile.write_text(textwrap.dedent(body).lstrip())
+    env = {**os.environ, "JUDB_NO_BROWSER": "1"}
+    proc = subprocess.Popen(
+        [
+            sys.executable, "-m", "pytest", str(testfile),
+            "-s", "-p", "no:cacheprovider", "--pdbcls=judb:Debugger",
+            *extra_args,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        bufsize=1,
+    )  # fmt: skip
+    lines: list[str] = []
+    try:
+        paused = asyncio.run(_pause_then_continue(_read_judb_url(proc, lines)))
+        return paused, proc.wait(timeout=30), "".join(lines)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+def test_pytest_trace_breaks_at_the_start_of_a_test(tmp_path: Path):
+    """`pytest --trace` breaks at the first line of each test, in the browser UI.
+
+    This reaches `interaction` via `runcall` — the *live* path, which for a
+    while paused with no server and therefore no way in.
+    """
+    paused, returncode, output = _run_pytest_paused(
+        tmp_path,
+        """
+        def test_traced():
+            first = 1
+            assert first == 1
+        """,
+        "--trace",
+    )
+    assert paused["function"] == "test_traced"
+    assert paused.get("postmortem") is None  # a live pause, not post-mortem
+    # Resuming runs the test to completion.
+    assert returncode == 0, output
+    assert "1 passed" in output
+
+
+def test_pytest_breakpoint_under_pdbcls(tmp_path: Path):
+    """`breakpoint()` inside a test reaches judb when --pdbcls selects it.
+
+    pytest swaps `pdb.set_trace` in pytest_configure, so `breakpoint()` routes
+    through pytestPDB into our `Debugger.set_trace` — again the live path.
+    """
+    paused, returncode, output = _run_pytest_paused(
+        tmp_path,
+        """
+        def test_bp():
+            marker = "before"
+            breakpoint()
+            assert marker == "before"
+        """,
+    )
+    assert paused["function"] == "test_bp"
+    assert "marker" in paused["locals"]  # paused *after* marker was bound
+    assert returncode == 0, output
+    assert "1 passed" in output

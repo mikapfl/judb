@@ -137,13 +137,6 @@ class Debugger(bdb.Bdb):
         if self._is_postmortem:
             assert tb is not None  # narrowed by the guard above
             self._frames = self._frames_of_traceback(tb)
-            # `pytest --pdb` reaches us via post-mortem without going through an
-            # entry point that starts the UI server (judb.set_trace / -m judb
-            # do). Bring it up here. Safe only on this branch: the live path is
-            # driven by callers that read `outbound` directly (the unit tests),
-            # and a server's outbound pump would race them — post-mortem has no
-            # such competing reader (the browser is the only consumer).
-            self.start_server()
         else:
             self._frames = self._frames_of(frame)
         # Selection starts at the innermost frame (the failing one, post-mortem).
@@ -153,6 +146,16 @@ class Debugger(bdb.Bdb):
         self._debuggee_tid = threading.get_ident()
         self._exc_info = (type(exc).__name__, str(exc)) if exc is not None else None
 
+        # Guarantee there is a UI to talk to before we block on `inbound`.
+        # Several entry points reach here *without* going through one that
+        # starts the server, because pytest constructs its own Debugger:
+        # `--pdb` (post-mortem), `--trace` (runcall) and `breakpoint()` under
+        # `--pdbcls`. Without this they would pause with no URL and no way in.
+        # Idempotent, so `judb.set_trace()` / `python -m judb` — which start it
+        # eagerly — are unaffected. Safe because the server's outbound pump is
+        # the *sole* consumer of that queue: nothing else reads it, so bringing
+        # the server up here cannot steal messages from another reader.
+        self.start_server()
         self._reassert_sigint_handler()
         self._emit_paused(target)
         while True:
