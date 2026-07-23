@@ -18,6 +18,8 @@ jobs:
   build:
     name: build + verify artifacts
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v9.0.0
@@ -35,6 +37,19 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
         working-directory: frontend
+
+      - name: Read version (and require changelog notes for a real release)
+        id: meta
+        run: |
+          version=$(python3 scripts/release_notes.py version)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing judb $version to ${{ inputs.target }}"
+          # Fail *before* anything is uploaded if `make changelog` was not run:
+          # the draft GitHub release is built from this section. Test-PyPI dry
+          # runs are exempt, since they often happen mid-cycle.
+          if [ "${{ inputs.target }}" = "pypi" ]; then
+            python3 scripts/release_notes.py notes > /dev/null
+          fi
 
       # Never ship an untested tree, even though CI covers main.
       - run: uv sync
@@ -77,3 +92,46 @@ jobs:
       - name: Publish to PyPI
         if: inputs.target == 'pypi'
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: tag + draft GitHub release
+    needs: [build, publish]
+    # Real releases only: a Test-PyPI dry run must not tag the repository.
+    if: inputs.target == 'pypi'
+    runs-on: ubuntu-latest
+    permissions:
+      # Push the tag and create the release.
+      contents: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      # Tag explicitly rather than letting the release create it: a draft
+      # release does not create its tag until published, and we want the exact
+      # commit that produced the uploaded artifacts pinned right away.
+      - name: Tag the release
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "judb $VERSION"
+          git push origin "v$VERSION"
+
+      # Draft, not published: you review it and press the button. Body is the
+      # real CHANGELOG.md section, so the release notes and the changelog can
+      # never drift apart. The built wheel + sdist are attached.
+      - name: Create the draft GitHub release
+        run: |
+          python3 scripts/release_notes.py notes > /tmp/notes.md
+          gh release create "v$VERSION" \
+            --draft \
+            --title "judb $VERSION" \
+            --notes-file /tmp/notes.md \
+            dist/*
+          echo "Draft release created — review and publish it at:"
+          echo "  https://github.com/${{ github.repository }}/releases"

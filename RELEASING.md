@@ -79,6 +79,8 @@ writing; if someone takes it in the meantime, the project name has to change in
    make changelog
    ```
 
+   towncrier `git rm`s the fragments, so the deletions come out already staged.
+
 5. **Commit and push** the version bump plus `CHANGELOG.md` and the removed
    fragments. Let CI go green on `main`.
 
@@ -97,19 +99,31 @@ writing; if someone takes it in the meantime, the project name has to change in
 7. **Release for real.** Actions → *Release* → *Run workflow* → `target: pypi`.
    If you configured a required reviewer, approve the run when it pauses.
 
-8. **Tag the release** so the changelog links resolve:
+   For a `pypi` target the workflow then, on its own:
 
-   ```bash
-   git tag -a v0.1.0 -m "judb 0.1.0" && git push origin v0.1.0
-   ```
+   - pushes an annotated tag `v<version>` at the exact commit that produced the
+     uploaded artifacts, and
+   - opens a **draft** GitHub release titled `judb <version>`, with the matching
+     `CHANGELOG.md` section as the body and the wheel + sdist attached.
+
+8. **Publish the draft** at <https://github.com/mikapfl/judb/releases> once you
+   have read it over. It is left as a draft deliberately — nothing is announced
+   until you press the button.
 
 ## What the workflow checks for you
 
-Before anything is uploaded, the build job re-runs the Python test suite and
-`scripts/smoke_install.sh`, which builds the wheel *and* the sdist, installs
-each into a fresh virtualenv, and drives a real pause → plot-in-frame →
-continue round-trip against the installed package. A broken artifact fails the
-release rather than reaching users.
+Before anything is uploaded, the build job:
+
+- reads `__version__` and, for a `pypi` release, **refuses to continue if
+  `CHANGELOG.md` has no section for it** — that almost always means
+  `make changelog` was not run, and the draft release is built from that
+  section;
+- re-runs the Python test suite;
+- runs `scripts/smoke_install.sh`, which builds the wheel *and* the sdist,
+  installs each into a fresh virtualenv, and drives a real pause →
+  plot-in-frame → continue round-trip against the installed package.
+
+A broken artifact fails the release rather than reaching users.
 
 ## Notes
 
