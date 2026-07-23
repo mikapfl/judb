@@ -365,7 +365,7 @@ contract (§3) was meant to buy us.
   DataFrame-CSS cases (Vitest); Playwright e2e still green (6/6).
 
 **Phase 3 — Fit & finish.** Conditional breakpoints, watch expressions, source
-across multiple files, save/load console cells (notebook export), settings,
+across multiple files, settings,
 packaging & a clean install story. *Optional/cheap:* surface the standalone SPA
 inside JupyterLab via `jupyter-server-proxy` (near-zero effort, gets us "inside
 Lab" for demos without the labextension toolchain).
