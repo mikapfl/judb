@@ -49,10 +49,12 @@ hook, no code change needed:
 PYTHONBREAKPOINT=judb.set_trace python your_script.py
 ```
 
-Or run a whole script under judb without touching it (stops at the first line):
+Or run a whole script or module under judb without touching it (stops at the
+first line):
 
 ```bash
 python -m judb your_script.py [args...]
+python -m judb -m your.pipeline.module [args...]
 ```
 
 ## Debugging a failing test

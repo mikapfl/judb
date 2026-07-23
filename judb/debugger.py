@@ -58,6 +58,10 @@ class Debugger(bdb.Bdb):
         # `_exc_info` (type, message) rides along on the `paused` message.
         self._is_postmortem = False
         self._exc_info: tuple[str, str] | None = None
+        # Set while paused at the outermost traced frame's return (see
+        # `user_return`): the debuggee has finished, so resuming must stop
+        # tracing rather than step onward into interpreter shutdown.
+        self._at_exit_return = False
         # Identity of the debuggee thread (the one that blocks in the interaction
         # loop and runs cells), and whether a cell is executing right now — both
         # read by `interrupt`, which fires a KeyboardInterrupt into that thread
@@ -76,8 +80,25 @@ class Debugger(bdb.Bdb):
         self.interaction(frame)
 
     def user_return(self, frame: FrameType, return_value: object) -> None:
-        # Phase 0 does not stop on returns; kept for completeness.
-        pass
+        """Stop when the *outermost traced frame* returns — the debuggee is done.
+
+        Without this, tracing outlives the debuggee's own code: with
+        ``judb.set_trace()`` on the last line of a script there is no further
+        line event in user code, so the next one lands in interpreter shutdown
+        internals (``threading._shutdown``) and the browser shows stdlib frames
+        instead of the user's program. Stopping at ``botframe``'s return gives a
+        final look at their own frame instead (pdb shows ``--Return--`` here).
+
+        Every *other* return stays silent, so ``step``/``next``/``return`` keep
+        their current semantics.
+        """
+        if frame is not self.botframe:
+            return
+        self._at_exit_return = True
+        try:
+            self.interaction(frame)
+        finally:
+            self._at_exit_return = False
 
     def user_exception(
         self,
@@ -214,6 +235,14 @@ class Debugger(bdb.Bdb):
             self._emit({"type": "error", "message": f"unknown command: {cmd!r}"})
             return False
 
+        if self._at_exit_return and cmd in ("step", "next", "return", "continue"):
+            # Paused at the outermost frame's return: the debuggee's code is
+            # finished, so *any* resume ends tracing. Stepping onward from here
+            # would only walk into interpreter shutdown internals.
+            self.set_continue()
+            self._emit({"type": "running"})
+            return True
+
         if cmd == "step":
             self.set_step()
         elif cmd == "next":
@@ -303,6 +332,8 @@ class Debugger(bdb.Bdb):
         }
         if self._is_postmortem:
             message["postmortem"] = True
+        if self._at_exit_return:
+            message["exiting"] = True
         if self._exc_info is not None:
             message["exception"] = {
                 "type": self._exc_info[0],
