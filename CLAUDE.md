@@ -140,3 +140,5 @@ debuggee and (eventually) the web server:
   inline `# noqa: ANN401`.
 - ruff runs with `extend-select = ["ANN", "PYI"]` and `preview = true`; `ANN201`
   is disabled for `tests/**` only.
+- For now, while we're in early development, we just develop on the `main`
+  branch directly.
