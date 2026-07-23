@@ -1,0 +1,79 @@
+name: Release
+
+# Manual only — releases are never triggered by a push or a tag.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Index to publish to"
+        type: choice
+        options: [testpypi, pypi]
+        default: testpypi
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build + verify artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+      # Building the sdist runs the hatch hook, which builds the frontend
+      # bundle; the sdist then ships it so installing needs no Node.
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: frontend
+
+      # Never ship an untested tree, even though CI covers main.
+      - run: uv sync
+      - run: uv run pytest -q
+
+      # Builds wheel + sdist into dist/, installs *each* into a fresh venv and
+      # runs a headless pause -> plot -> continue round-trip against it.
+      - run: ./scripts/smoke_install.sh
+
+      - run: uv run python -c "import pathlib; print('\n'.join(str(p) for p in pathlib.Path('dist').iterdir()))"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: publish to ${{ inputs.target }}
+    needs: build
+    runs-on: ubuntu-latest
+    # Named per target so PyPI releases can require a reviewer in the repo's
+    # environment protection rules, while Test-PyPI stays friction-free.
+    environment: ${{ inputs.target }}
+    permissions:
+      # Trusted Publishing (OIDC): no API token stored in the repo. Configure a
+      # publisher for this workflow on the index first, or the upload is denied.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to Test-PyPI
+        if: inputs.target == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+      - name: Publish to PyPI
+        if: inputs.target == 'pypi'
+        uses: pypa/gh-action-pypi-publish@release/v1

@@ -57,10 +57,12 @@ proof that a clean install works.
   *Exit:* `pip install dist/judb-*.whl` in a fresh venv, then a scripted headless
   `set_trace(open_browser=False)` round-trip (reuse `tests/test_server.py`'s ws
   harness) passes.
-- **Python floor.** `requires-python = ">=3.13"` is aggressive for a tool that
-  wants adoption. **[OPEN]** Is 3.13 a hard floor, or should we widen to 3.11/3.12
-  to reach more scientific users? (Costs: verifying no 3.13-only syntax/stdlib use;
-  `sys.monitoring` is 3.12+ anyway and is Phase 4.)
+- **Python floor. ✅ Resolved.** Held at 3.13 (open decision #1); CI runs the
+  suite on **3.13 and 3.14** (`.github/workflows/ci.yml`). Verified green on 3.14
+  before wiring the matrix, so the forward guard starts honest.
+- **CI. ✅ Done.** `ci.yml` on every PR and push to `main`: tests (3.13/3.14),
+  lint + `pylic`, frontend (svelte-check/Vitest/Playwright), and the wheel+sdist
+  install smoke.
 
 ### A2. Entry points — meet users where they are
 
@@ -126,6 +128,11 @@ Things that don't show up in the demo scripts but bite real users.
   versioning story.
 - **[DECISION] Publish to PyPI as `0.1.0`.** Test-PyPI dry run first, then real.
   This is the concrete "show the world" deliverable and the natural Wave A exit.
+  *Pipeline done:* `.github/workflows/release.yml` is `workflow_dispatch`-only,
+  takes a `testpypi`/`pypi` target, and rebuilds + re-verifies (tests and the
+  install smoke) before publishing via Trusted Publishing. **Still manual, one
+  time:** register the trusted publisher on both indexes and create the matching
+  `testpypi` / `pypi` GitHub environments, then run the Test-PyPI dry run.
 
 **Wave A exit:** a stranger runs `pip install judb`, then either
 `python -m judb their_script.py` or `pytest --pdbcls=judb:Debugger` (or adds

@@ -48,6 +48,23 @@ pure-Python execution) are all done. Next up is Phase 3 (fit & finish — see
 Use `uv` for everything (deps live in `pyproject.toml`; `uv sync` to install  - or use `uv add` directly).
 pre-commit is installed as a git hook, so commits are gated on the same checks as `make lint`.
 
+### CI and releases (`.github/workflows/`)
+
+`ci.yml` runs on every pull request and every push to `main`, in four parallel
+jobs: **tests** (matrix py3.13 + py3.14 — no Node, the Python suite does not
+need the built bundle), **lint + licenses** (`pre-commit` + `pylic`, synced with
+`--all-extras` because ty must resolve `demo_rich.py`'s imports), **frontend**
+(svelte-check, Vitest, Playwright — needs Python too, since the e2e drives a
+real debuggee), and **package** (`scripts/smoke_install.sh`: build wheel+sdist,
+install each into a fresh venv, round-trip it).
+
+`release.yml` is **`workflow_dispatch` only** — never a push or tag trigger. It
+takes a `target` input (`testpypi` | `pypi`), rebuilds and re-verifies the
+artifacts, then publishes via PyPI **Trusted Publishing** (OIDC, no stored
+token). Each target maps to a GitHub *environment* of the same name, so `pypi`
+can require a reviewer. Both must be configured once on the index side before
+the first upload will be accepted.
+
 ### Tests (`tests/`, organised by topic)
 
 Files are named for **what they cover**, not the phase that introduced them:

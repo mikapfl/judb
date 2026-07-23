@@ -1,5 +1,7 @@
 # judb
 
+[![CI](https://github.com/mikapfl/judb/actions/workflows/ci.yml/badge.svg)](https://github.com/mikapfl/judb/actions/workflows/ci.yml)
+
 A browser-based visual Python debugger for datascience - debug any Python module
 or function, with the full power of jupyter notebooks.
 

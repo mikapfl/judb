@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch/PR supersedes an in-flight run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: tests (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.13 is the floor (`requires-python`); 3.14 is the forward guard.
+        python: ["3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+      # No Node here on purpose: the Python suite does not need the built
+      # frontend bundle, so this job stays fast.
+      - run: uv sync --python ${{ matrix.python }}
+      - run: uv run --python ${{ matrix.python }} pytest -q
+
+  lint:
+    name: lint + licenses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+      # pre-commit builds a venv per hook; caching them turns a ~1min install
+      # into seconds. Keyed on the config, so a hook bump invalidates it.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+      # `--all-extras` is required, not cosmetic: ty resolves the imports in
+      # scripts/demo_rich.py (polars, xarray, …), and pylic's allowlist is
+      # calibrated against the full dependency set.
+      - run: uv sync --all-extras
+      - run: uv run pre-commit run --all-files --show-diff-on-failure
+      - run: uv run pylic check
+
+  frontend:
+    name: frontend (check, unit, e2e)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      # The Playwright e2e drives a *real* debuggee (frontend/e2e/debuggee.py),
+      # so this job needs the Python environment as well as Node.
+      - run: uv sync
+      - run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - run: pnpm run check
+        working-directory: frontend
+      - run: pnpm run test
+        working-directory: frontend
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: frontend
+      # `pnpm run e2e` builds the bundle first, so the browser always tests
+      # the current source.
+      - run: pnpm run e2e
+        working-directory: frontend
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: frontend/test-results/
+          retention-days: 7
+
+  package:
+    name: wheel + sdist install smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+      # Building the sdist runs the hatch hook, which builds the frontend, so
+      # Node is needed here — but *installing* the built artifacts is not
+      # allowed to need it, which is exactly what the smoke test proves.
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - run: ./scripts/smoke_install.sh
