@@ -49,6 +49,25 @@ hook, no code change needed:
 PYTHONBREAKPOINT=judb.set_trace python your_script.py
 ```
 
+Or run a whole script under judb without touching it (stops at the first line):
+
+```bash
+python -m judb your_script.py [args...]
+```
+
+## Debugging a failing test
+
+Point pytest's post-mortem debugger at judb, and a failing test drops you into
+the browser UI **paused at the failure**, with the console live in that frame:
+
+```bash
+pytest --pdb --pdbcls=judb:Debugger
+```
+
+Inspect the assertion's operands, plot the offending array, poke at locals — all
+in the frame where the test blew up. Hit Continue to move on. (`--trace` and
+`breakpoint()` under pytest aren't wired to the UI yet.)
+
 Prefer a ready-made demo? From a checkout:
 
 ```bash

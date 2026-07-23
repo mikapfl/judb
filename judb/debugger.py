@@ -15,6 +15,7 @@ import atexit
 import bdb
 import ctypes
 import linecache
+import os
 import queue
 import signal
 import sys
@@ -33,7 +34,13 @@ if TYPE_CHECKING:
 
 
 class Debugger(bdb.Bdb):
-    def __init__(self, skip: Iterable[str] | None = None) -> None:
+    def __init__(
+        self, skip: Iterable[str] | None = None, **_pdb_kwargs: object
+    ) -> None:
+        # `pytest --pdbcls=judb:Debugger` wraps us in a `pdb.Pdb`-style subclass
+        # and may instantiate with pdb kwargs (completekey/stdin/stdout/nosigint/
+        # readrc). We drive the UI over a websocket, not a terminal Cmd loop, so
+        # we accept and ignore them. See PHASE3_PLAN.md A2.
         super().__init__(skip=skip)
         self.console = Console()
         self.inbound: queue.Queue[dict[str, Any]] = queue.Queue()
@@ -45,6 +52,12 @@ class Debugger(bdb.Bdb):
         self._selected = 0
         self._quitting = False
         self._server: DebugServer | None = None
+        # Post-mortem state: set when we enter `interaction` with a traceback
+        # (e.g. `pytest --pdb`) rather than a live paused frame. In that mode the
+        # program has already unwound, so stepping just leaves the debugger, and
+        # `_exc_info` (type, message) rides along on the `paused` message.
+        self._is_postmortem = False
+        self._exc_info: tuple[str, str] | None = None
         # Identity of the debuggee thread (the one that blocks in the interaction
         # loop and runs cells), and whether a cell is executing right now — both
         # read by `interrupt`, which fires a KeyboardInterrupt into that thread
@@ -76,14 +89,51 @@ class Debugger(bdb.Bdb):
 
     # --- interaction loop -------------------------------------------------
 
-    def interaction(self, frame: FrameType) -> None:
-        self.current_frame = frame
-        self._debuggee_tid = threading.get_ident()
-        self._reassert_sigint_handler()
-        # Freeze the stopped stack; selection starts at the innermost frame.
-        self._frames = self._frames_of(frame)
+    def interaction(
+        self,
+        frame: FrameType | None,
+        tb_or_exc: TracebackType | BaseException | None = None,
+    ) -> None:
+        """Pause and drive the UI until a resume command returns.
+
+        Two entry shapes:
+
+        * **Live pause** — ``interaction(frame)`` from ``user_line`` / our
+          ``set_trace``. The stack is the frame's ``f_back`` chain.
+        * **Post-mortem** — ``interaction(None, exc_or_tb)``, as ``pytest --pdb``
+          calls it after a failure (on 3.13 it passes the *exception*, older
+          Pythons a traceback). The stack comes from the traceback chain, and
+          the program has already unwound, so stepping only leaves the debugger.
+        """
+        exc: BaseException | None = None
+        tb: TracebackType | None = None
+        if isinstance(tb_or_exc, BaseException):
+            exc, tb = tb_or_exc, tb_or_exc.__traceback__
+        elif tb_or_exc is not None:
+            tb = tb_or_exc
+
+        self._is_postmortem = frame is None and tb is not None
+        if self._is_postmortem:
+            assert tb is not None  # narrowed by the guard above
+            self._frames = self._frames_of_traceback(tb)
+            # `pytest --pdb` reaches us via post-mortem without going through an
+            # entry point that starts the UI server (judb.set_trace / -m judb
+            # do). Bring it up here. Safe only on this branch: the live path is
+            # driven by callers that read `outbound` directly (the unit tests),
+            # and a server's outbound pump would race them — post-mortem has no
+            # such competing reader (the browser is the only consumer).
+            self.start_server()
+        else:
+            self._frames = self._frames_of(frame)
+        # Selection starts at the innermost frame (the failing one, post-mortem).
         self._selected = len(self._frames) - 1
-        self._emit_paused(frame)
+        target = self._frames[self._selected]
+        self.current_frame = target
+        self._debuggee_tid = threading.get_ident()
+        self._exc_info = (type(exc).__name__, str(exc)) if exc is not None else None
+
+        self._reassert_sigint_handler()
+        self._emit_paused(target)
         while True:
             # The idle wait is deliberately *outside* the guard below: a real
             # terminal Ctrl+C while paused (this thread is the main thread, so
@@ -92,7 +142,7 @@ class Debugger(bdb.Bdb):
             # rather than being swallowed.
             msg = self.inbound.get()
             try:
-                if self._handle(frame, msg):
+                if self._handle(target, msg):
                     return
             except KeyboardInterrupt:
                 # A late `interrupt` aimed at a just-finished cell that landed in
@@ -153,6 +203,16 @@ class Debugger(bdb.Bdb):
             self._quitting = True
             self.set_quit()
             return True
+
+        if self._is_postmortem:
+            # The program already unwound; there is nothing to step through. Any
+            # resume command simply leaves the debugger (the caller — e.g.
+            # pytest's post_mortem — then proceeds past the failed test).
+            if cmd in ("step", "next", "return", "continue"):
+                self._emit({"type": "running"})
+                return True
+            self._emit({"type": "error", "message": f"unknown command: {cmd!r}"})
+            return False
 
         if cmd == "step":
             self.set_step()
@@ -235,14 +295,20 @@ class Debugger(bdb.Bdb):
         self.outbound.put(message)
 
     def _emit_paused(self, frame: FrameType) -> None:
-        self._emit(
-            {
-                "type": "paused",
-                **self._frame_view(frame),
-                "stack": self._stack_summary(frame),
-                "selected": self._selected,
+        message: dict[str, Any] = {
+            "type": "paused",
+            **self._frame_view(frame),
+            "stack": self._stack_summary(),
+            "selected": self._selected,
+        }
+        if self._is_postmortem:
+            message["postmortem"] = True
+        if self._exc_info is not None:
+            message["exception"] = {
+                "type": self._exc_info[0],
+                "message": self._exc_info[1],
             }
-        )
+        self._emit(message)
 
     def _select_frame(self, index: object) -> None:
         """Retarget console + inspection to stack frame ``index`` (0 = outermost)."""
@@ -352,15 +418,32 @@ class Debugger(bdb.Bdb):
         frames.reverse()
         return frames
 
-    def _stack_summary(self, frame: FrameType | None) -> list[dict[str, Any]]:
-        # Index-aligned with self._frames / the `selected` index.
+    @staticmethod
+    def _frames_of_traceback(tb: TracebackType) -> list[FrameType]:
+        """The frames of a traceback chain, outermost-first.
+
+        A traceback runs outermost→innermost (``tb_next`` goes deeper toward the
+        ``raise``), so this matches ``_frames_of``'s ordering and leaves the
+        failing frame last — where post-mortem selection starts.
+        """
+        frames: list[FrameType] = []
+        cur: TracebackType | None = tb
+        while cur is not None:
+            frames.append(cur.tb_frame)
+            cur = cur.tb_next
+        return frames
+
+    def _stack_summary(self) -> list[dict[str, Any]]:
+        # Index-aligned with self._frames / the `selected` index. Reads the
+        # frozen stack directly so it is correct for post-mortem (traceback)
+        # frames too, whose f_back chain would not reproduce the failure stack.
         return [
             {
                 "filename": f.f_code.co_filename,
                 "lineno": f.f_lineno,
                 "function": f.f_code.co_name,
             }
-            for f in self._frames_of(frame)
+            for f in self._frames
         ]
 
     # --- server lifecycle -------------------------------------------------
@@ -371,6 +454,10 @@ class Debugger(bdb.Bdb):
         The server runs on a daemon thread and only touches ``inbound``/
         ``outbound``; cell execution stays on the debuggee thread. Idempotent —
         repeated calls return the existing URL without reopening the browser.
+
+        Setting ``JUDB_NO_BROWSER`` in the environment suppresses the browser
+        tab regardless of ``open_browser`` (handy for headless boxes, CI, and
+        driving pytest's ``--pdb`` entry point from a test).
         """
         if self._server is not None:
             return self._server.url
@@ -383,7 +470,7 @@ class Debugger(bdb.Bdb):
         # Always show the URL: the browser may not auto-open (headless / remote /
         # SSH), and the token-in-URL is the only way in.
         print(f"judb: debugger UI at {url}", file=sys.stderr, flush=True)
-        if open_browser:
+        if open_browser and os.environ.get("JUDB_NO_BROWSER") is None:
             import webbrowser
 
             webbrowser.open(url)
