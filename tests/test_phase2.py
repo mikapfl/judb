@@ -6,9 +6,15 @@ after selecting that outer frame.
 """
 
 import asyncio
-import queue
+import os
+import pty
+import re
+import signal
+import sys
+import textwrap
 import threading
 import time
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -23,6 +29,11 @@ async def _recv_type(ws: ClientWebSocketResponse, want: str) -> dict[str, Any]:
         msg = await asyncio.wait_for(ws.receive_json(), timeout=10)
         if msg.get("type") == want:
             return msg
+
+
+def _ws_url(url: str) -> str:
+    q = urlparse(url)
+    return f"ws://{q.hostname}:{q.port}/ws?token={parse_qs(q.query)['token'][0]}"
 
 
 def _has_error(outputs: list[dict[str, Any]], ename: str) -> bool:
@@ -411,41 +422,119 @@ def test_interrupt_wakes_a_blocking_call_on_the_main_thread():
     assert collected["elapsed"] < 10
 
 
-def test_terminal_ctrl_c_while_paused_reaches_the_debuggee():
-    """A real terminal Ctrl+C while paused raises KeyboardInterrupt in the
-    debuggee thread's idle ``inbound.get()``. It must propagate into the debuggee
-    (so the program can be ended without the judb window), *not* be swallowed by
-    the stray-interrupt guard — that guard only covers the cell-execution window.
+def _read_pty_for_url(master: int, sink: list[str], timeout: float = 30) -> str:
+    """Drain the pty master on a thread and return judb's UI URL.
+
+    Draining continuously keeps the tty buffer from filling while the debuggee
+    is paused, and keeps collecting the traceback it prints on the way out.
     """
+    found = threading.Event()
+    box: dict[str, str] = {}
 
-    class InterruptingQueue(queue.Queue[dict[str, Any]]):
-        # Stands in for a terminal Ctrl+C landing on the paused thread the instant
-        # the interaction loop reaches its idle wait.
-        def get(
-            self, block: bool = True, timeout: float | None = None
-        ) -> dict[str, Any]:
-            raise KeyboardInterrupt
+    def reader() -> None:
+        while True:
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:  # EIO once the child is gone
+                return
+            if not chunk:
+                return
+            sink.append(chunk.decode(errors="replace"))
+            match = re.search(r"judb: debugger UI at (\S+)", "".join(sink))
+            if match and "url" not in box:
+                box["url"] = match.group(1)
+                found.set()
 
-    dbg = Debugger()
-    dbg.inbound = InterruptingQueue()
-    caught: dict[str, Any] = {}
+    threading.Thread(target=reader, daemon=True).start()
+    if not found.wait(timeout=timeout):
+        raise AssertionError("never saw judb URL. output:\n" + "".join(sink))
+    return box["url"]
 
-    def debuggee() -> None:
+
+def _wait_for_exit(pid: int, timeout: float) -> int | None:
+    """waitpid with a deadline; None if the child is still running."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        waited, status = os.waitpid(pid, os.WNOHANG)
+        if waited == pid:
+            return status
+        time.sleep(0.05)
+    return None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="needs a POSIX controlling tty")
+# pty.fork warns about forking a multi-threaded process; we exec immediately in
+# the child, so none of the inherited state it worries about is ever touched.
+@pytest.mark.filterwarnings("ignore:This process .* is multi-threaded")
+def test_terminal_ctrl_c_while_paused_ends_the_debuggee(tmp_path: Path):
+    """End to end: Ctrl+C in the *controlling terminal* ends a paused debuggee.
+
+    The debuggee gets a pty as its controlling terminal (``pty.fork`` does the
+    ``setsid`` + ``TIOCSCTTY`` dance that merely inheriting a slave fd does not),
+    runs until it is genuinely paused — we wait for a ``paused`` message over the
+    websocket, so the UI server is up *and* the interaction loop is sitting in
+    its idle ``inbound.get()`` — and is then sent a real interrupt by writing
+    ``\\x03`` to the pty master. The tty line discipline turns that into a SIGINT
+    for the foreground process group, exactly as pressing Ctrl+C does.
+
+    The interrupt must propagate *into* the debuggee and end the program: with
+    the window closed or unreachable, that is a user's only way out. It must not
+    be swallowed by the interaction loop's stray-interrupt guard, which covers
+    only the narrow window just after a console cell finishes.
+    """
+    script = tmp_path / "paused_demo.py"
+    script.write_text(
+        textwrap.dedent(
+            """
+            import judb
+            judb.set_trace(open_browser=False)
+            # Sentinel split in two so the traceback's echo of this very line
+            # (which the debuggee dies on) cannot itself satisfy the assertion.
+            print("RESU" + "MED")
+            """
+        ).lstrip()
+    )
+
+    pid, master = pty.fork()
+    if pid == 0:  # child: the pty slave is its stdin/stdout/stderr *and* its ctty
+        os.execve(
+            sys.executable,
+            [sys.executable, str(script)],
+            {**os.environ, "JUDB_NO_BROWSER": "1"},
+        )
+        os._exit(127)  # only reached if exec fails
+
+    seen: list[str] = []
+    try:
+        url = _read_pty_for_url(master, seen)
+
+        async def wait_until_paused() -> None:
+            async with (
+                ClientSession() as session,
+                session.ws_connect(_ws_url(url)) as ws,
+            ):
+                await _recv_type(ws, "paused")
+
+        asyncio.run(wait_until_paused())
+
+        os.write(master, b"\x03")  # Ctrl+C on the controlling terminal
+
+        status = _wait_for_exit(pid, timeout=30)
+        assert status is not None, f"survived Ctrl+C. output:\n{''.join(seen)}"
+        assert os.WIFSIGNALED(status) or os.WEXITSTATUS(status) != 0, (
+            f"expected a non-clean exit, got status {status}"
+        )
+        text = "".join(seen)
+        assert "KeyboardInterrupt" in text, f"no KeyboardInterrupt in output:\n{text}"
+        # It died at the pause rather than resuming past it.
+        assert "RESUMED" not in text
+    finally:
         try:
-            dbg.set_trace()
-            _ = 1
-        except KeyboardInterrupt:
-            caught["interrupted"] = True
-
-    thread = threading.Thread(target=debuggee)
-    thread.start()
-    # The loop emits `paused`, then hits the interrupting get().
-    assert dbg.outbound.get(timeout=15)["type"] == "paused"
-
-    thread.join(timeout=10)
-    # If the guard had swallowed it, the loop would spin forever and never join.
-    assert not thread.is_alive()
-    assert caught.get("interrupted") is True
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+        except (ProcessLookupError, ChildProcessError):
+            pass
+        os.close(master)
 
 
 def test_bad_frame_index_errors():

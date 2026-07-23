@@ -22,8 +22,7 @@ That page is now the **built Svelte SPA** (source in `frontend/`, see below), no
 the old hand-written HTML: a four-pane layout (Source / Variables / Console / Call
 stack) with a CodeMirror source view (current-line highlight), an in-frame
 CodeMirror console rendering text/html/png/svg/etc., a call-stack list, and
-continue/next/step/return/quit. `scripts/demo.py` remains a terminal driver over
-the same queues. Frame selection (`select_frame` retargets the console), lazy
+continue/next/step/return/quit. Frame selection (`select_frame` retargets the console), lazy
 variable inspection (`expand` → a mime-bundle repr + one level of navigable
 children, rendered as a tree in the Variables pane), tab-completion
 (`complete` → IPython completer matches wired to CodeMirror autocomplete), a
@@ -40,11 +39,11 @@ pure-Python execution) are all done. Next up is Phase 3 (fit & finish — see
 - `make test` — run all tests (`uv run pytest`).
 - `make lint` — run all pre-commit hooks across the repo (ruff check+format, ty, uv-lock).
 - `make help` — list make targets (self-documenting from `## ` comments).
-- `uv run pytest tests/test_phase0.py::test_stop_run_cell_in_frame_get_png` — run a single test.
+- `uv run pytest tests/test_phase1.py::test_plot_paused_frame_over_websocket` — run a single test.
 - `uv run pytest -s` — run tests showing the captured PNG-byte-count prints.
 - `uv run ty check` — type-check only.
-- `uv run python scripts/demo.py` — **interactively** drive the debugger in a terminal
-  (must be a real TTY for stdin). At each pause, type Python to run it in the paused frame.
+- `uv run python scripts/demo_p2.py` — run a demo debuggee and drive it from the
+  browser UI (`scripts/demo_rich.py` for a spread of rich objects).
 
 Use `uv` for everything (deps live in `pyproject.toml`; `uv sync` to install  - or use `uv add` directly).
 pre-commit is installed as a git hook, so commits are gated on the same checks as `make lint`.

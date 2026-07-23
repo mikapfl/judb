@@ -1,19 +1,19 @@
-"""Phase 0 acceptance tests.
+"""Console unit tests — headless rich capture and frame inspection.
 
-Exit criterion (IMPLEMENTATION_PLAN.md §5): stop at a breakpoint, run a cell
-in-frame, see a PNG bundle. These tests exercise the two composed halves — the
-embedded rich-capture console and the queue-driven bdb debugger.
+Originally the Phase 0 acceptance tests. The debugger+console *composition* half
+(pause, run a cell in-frame, get a PNG back) now lives in
+``tests/test_phase1.py::test_plot_paused_frame_over_websocket``, which exercises
+the same exit criterion end-to-end over the real websocket; the early
+queue-driving proof-of-concept version was dropped as redundant. What remains
+here is the console itself, which those integration tests only cover indirectly.
 """
 
 import base64
-import threading
 from types import FrameType
-from typing import Any
 
-import numpy as np
 import pytest
 
-from judb import Console, Debugger
+from judb import Console
 
 # --- console: headless rich capture ---------------------------------------
 
@@ -138,60 +138,3 @@ def test_inspect_gets_rich_bundle_for_ipython_display_objects():
 
     result = Console().inspect(frame_with_local(), [["name", "widget"]])
     assert result["repr"].get("text/html") == "<b>rich</b>"
-
-
-# --- debugger + console composition ---------------------------------------
-
-
-def _target(dbg: Debugger) -> float:
-    """A tiny 'scientific' function with an in-scope array to plot."""
-    data = np.linspace(0.0, 10.0, 50)
-    dbg.set_trace()  # execution stops at the *next* line
-    total = float(data.sum())
-    return total
-
-
-def test_stop_run_cell_in_frame_get_png():
-    """The headline Phase 0 flow: pause, plot the paused frame's array, continue."""
-    dbg = Debugger()
-    collected: dict[str, Any] = {}
-
-    def driver() -> None:
-        paused = dbg.outbound.get(timeout=15)
-        assert paused["type"] == "paused"
-        assert paused["function"] == "_target"
-        assert "data" in paused["locals"]  # array in the paused frame
-        collected["paused"] = paused
-
-        # Plot the array that lives *only* in the paused frame's namespace.
-        dbg.inbound.put(
-            {
-                "cmd": "execute_cell",
-                "code": "import matplotlib.pyplot as plt; plt.plot(data); None",
-            }
-        )
-        result = dbg.outbound.get(timeout=15)
-        assert result["type"] == "cell_result"
-        collected["result"] = result
-
-        dbg.inbound.put({"cmd": "continue"})
-
-    thread = threading.Thread(target=driver)
-    thread.start()
-    total = _target(dbg)  # blocks in the interaction loop while paused
-    thread.join(timeout=20)
-    assert not thread.is_alive()
-
-    # The debuggee ran to completion after 'continue'.
-    assert total == 250.0
-
-    # A PNG was rendered from the paused frame's real array.
-    result = collected["result"]
-    png_outputs = [o for o in result["outputs"] if "image/png" in o["data"]]
-    assert png_outputs, f"no PNG in outputs: {result['outputs']}"
-    raw = base64.b64decode(png_outputs[0]["data"]["image/png"])
-    assert raw[:8] == b"\x89PNG\r\n\x1a\n"
-    print(
-        f"\n[debugger] paused in {collected['paused']['function']}, "
-        f"plotted in-frame array -> PNG {len(raw)} bytes"
-    )
