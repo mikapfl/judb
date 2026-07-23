@@ -12,7 +12,8 @@ import {
   lineNumbers,
   type DecorationSet,
 } from "@codemirror/view";
-import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
+import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
+import { tags as t } from "@lezer/highlight";
 import { python } from "@codemirror/lang-python";
 import {
   autocompletion,
@@ -20,33 +21,63 @@ import {
   type CompletionSource,
 } from "@codemirror/autocomplete";
 
-/** Dark theme roughly matching tokens.css so editors sit in the panes cleanly. */
-export const judbTheme = EditorView.theme(
-  {
-    "&": { color: "var(--fg)", backgroundColor: "transparent", height: "100%" },
-    ".cm-content": { fontFamily: "var(--font-mono)", caretColor: "var(--fg)" },
-    ".cm-gutters": {
-      backgroundColor: "transparent",
-      color: "var(--fg-faint)",
-      border: "none",
-    },
-    ".cm-activeLine": { backgroundColor: "transparent" },
-    ".cm-current-line": { backgroundColor: "var(--accent-bg)" },
-    ".cm-scroller": { fontFamily: "var(--font-mono)" },
-    "&.cm-focused": { outline: "none" },
-    // Clickable gutter: a red dot marks a set breakpoint; every other line has a
-    // transparent slot that reveals a faint dot on hover, inviting a click.
-    ".cm-breakpoint-gutter": { width: "1.1em", cursor: "pointer" },
-    ".cm-breakpoint-gutter .cm-gutterElement": { paddingLeft: "0.15em" },
-    ".cm-breakpoint": { color: "var(--err-fg, #e06c75)" },
-    ".cm-breakpoint-slot": { color: "transparent" },
-    ".cm-breakpoint-gutter .cm-gutterElement:hover .cm-breakpoint-slot": {
-      color: "var(--err-fg, #e06c75)",
-      opacity: "0.4",
-    },
+/** Editor chrome, driven entirely by tokens.css custom properties so the source
+ *  and console editors follow the light/dark theme without being rebuilt.
+ *  Selection + caret are styled explicitly (rather than leaning on CodeMirror's
+ *  built-in `dark` base) so both themes look right. */
+export const judbTheme = EditorView.theme({
+  "&": { color: "var(--fg)", backgroundColor: "transparent", height: "100%" },
+  ".cm-content": { fontFamily: "var(--font-mono)", caretColor: "var(--fg)" },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--fg)" },
+  // No `drawSelection` extension is loaded, so selection uses the native layer.
+  "& .cm-line::selection, & .cm-line ::selection": {
+    backgroundColor: "var(--cm-selection)",
   },
-  { dark: true },
-);
+  ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": {
+    backgroundColor: "var(--cm-selection)",
+  },
+  ".cm-gutters": {
+    backgroundColor: "transparent",
+    color: "var(--fg-faint)",
+    border: "none",
+  },
+  ".cm-activeLine": { backgroundColor: "transparent" },
+  ".cm-current-line": { backgroundColor: "var(--accent-bg)" },
+  ".cm-scroller": { fontFamily: "var(--font-mono)" },
+  "&.cm-focused": { outline: "none" },
+  // Clickable gutter: a red dot marks a set breakpoint; every other line has a
+  // transparent slot that reveals a faint dot on hover, inviting a click.
+  ".cm-breakpoint-gutter": { width: "1.1em", cursor: "pointer" },
+  ".cm-breakpoint-gutter .cm-gutterElement": { paddingLeft: "0.15em" },
+  ".cm-breakpoint": { color: "var(--err-fg, #e06c75)" },
+  ".cm-breakpoint-slot": { color: "transparent" },
+  ".cm-breakpoint-gutter .cm-gutterElement:hover .cm-breakpoint-slot": {
+    color: "var(--err-fg, #e06c75)",
+    opacity: "0.4",
+  },
+});
+
+/** Python syntax palette, coloured via CSS variables (tokens.css) so it recolours
+ *  on a theme switch. Replaces CodeMirror's fixed `defaultHighlightStyle`. */
+export const judbHighlight = HighlightStyle.define([
+  { tag: [t.keyword, t.controlKeyword, t.moduleKeyword], color: "var(--tok-keyword)" },
+  { tag: [t.string, t.special(t.string), t.regexp], color: "var(--tok-string)" },
+  { tag: [t.number, t.bool, t.null, t.atom], color: "var(--tok-number)" },
+  {
+    tag: [t.comment, t.lineComment, t.blockComment],
+    color: "var(--tok-comment)",
+    fontStyle: "italic",
+  },
+  {
+    tag: [t.function(t.variableName), t.function(t.propertyName)],
+    color: "var(--tok-fn)",
+  },
+  { tag: t.definition(t.variableName), color: "var(--tok-def)" },
+  { tag: [t.typeName, t.className, t.namespace], color: "var(--tok-type)" },
+  { tag: [t.operator, t.operatorKeyword, t.derefOperator], color: "var(--tok-operator)" },
+  { tag: [t.self, t.standard(t.variableName)], color: "var(--tok-builtin)" },
+  { tag: [t.variableName, t.propertyName], color: "var(--tok-variable)" },
+]);
 
 // --- current-line highlight (source pane) -------------------------------
 
@@ -146,7 +177,7 @@ export function sourceExtensions(onToggleBreakpoint?: (line: number) => void) {
     ...(onToggleBreakpoint ? breakpointGutter(onToggleBreakpoint) : []),
     lineNumbers(),
     python(),
-    syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+    syntaxHighlighting(judbHighlight),
     currentLineField,
     judbTheme,
     EditorView.editable.of(false),
@@ -164,7 +195,7 @@ export function sourceExtensions(onToggleBreakpoint?: (line: number) => void) {
 export function cellExtensions(completionSource?: CompletionSource) {
   const base = [
     python(),
-    syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+    syntaxHighlighting(judbHighlight),
     judbTheme,
     EditorView.lineWrapping,
   ];

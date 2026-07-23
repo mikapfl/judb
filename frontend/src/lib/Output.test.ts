@@ -20,6 +20,18 @@ describe("Output renderer registry", () => {
     expect(iframe?.getAttribute("srcdoc")).toContain("<b>hi</b>");
   });
 
+  it("injects Jupyter .dataframe CSS so pandas tables lose the UA borders", () => {
+    // pandas emits <table border="1" class="dataframe">; without our CSS the
+    // browser draws 1990s beveled cell borders. The srcdoc must ship the reset.
+    const { container } = out({
+      kind: "execute_result",
+      data: { "text/html": '<table border="1" class="dataframe"><tr><td>1</td></tr></table>' },
+    });
+    const srcdoc = container.querySelector("iframe")?.getAttribute("srcdoc") ?? "";
+    expect(srcdoc).toContain(".dataframe th, .dataframe td { border: none");
+    expect(srcdoc).toContain(".dataframe thead th { border-bottom");
+  });
+
   it("prefers a richer mime (png) over text/plain", () => {
     const { container } = out({
       kind: "execute_result",

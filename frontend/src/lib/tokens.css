@@ -1,4 +1,13 @@
-/* Design tokens + global reset. Dark theme (the debugger is a developer tool). */
+/* Design tokens + global reset.
+ *
+ * Dark is the base (`:root`); light is an override applied when
+ * `<html data-theme="light">` is set (see theme.svelte.ts). The app is JS-driven:
+ * theme.svelte.ts resolves auto/light/dark and stamps `data-theme` before mount,
+ * so we don't need a `prefers-color-scheme` media query here — but dark-as-base
+ * means the pre-JS / no-JS fallback is the developer-tool dark look.
+ *
+ * Every colour in the app comes from these variables; adding a theme is editing
+ * this file, not the components. */
 :root {
   color-scheme: dark;
 
@@ -22,10 +31,80 @@
   --err-bg: #5a2c2c;
   --err-fg: #f0b7b7;
 
+  /* Buttons + status chip. */
+  --btn-bg: #34343d;
+  --btn-bg-hover: #3f3f4a;
+  --btn-fg: #e0e0e6;
+  --status-fg: #c8c8d0;
+
+  /* CodeMirror: text selection + a syntax palette (One Dark-ish). Referenced by
+     the custom HighlightStyle in codemirror.ts, so highlighting follows the
+     theme without rebuilding the editors. */
+  --cm-selection: #3a4159;
+  --tok-keyword: #c678dd;
+  --tok-string: #98c379;
+  --tok-number: #d19a66;
+  --tok-comment: #7f848e;
+  --tok-fn: #61afef;
+  --tok-def: #61afef;
+  --tok-type: #e5c07b;
+  --tok-operator: #56b6c2;
+  --tok-variable: #d6d6dc;
+  --tok-builtin: #e5c07b;
+
+  /* Rich-output card backgrounds (matplotlib PNGs stay on white in both
+     themes, matching a notebook; the HTML/dataframe iframe follows the theme). */
+  --img-bg: #ffffff;
+  --df-bg: #1e1e22;
+
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --font-size: 13px;
 
   --pane-header-h: 1.9rem;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #ffffff;
+  --bg-raised: #f2f2f5;
+  --bg-inset: #f7f7f9;
+  --border: #dcdce2;
+  --border-strong: #c4c4ce;
+
+  --fg: #1e1e22;
+  --fg-dim: #5a6072;
+  --fg-faint: #b0b0ba;
+
+  --accent: #3a5bd0;
+  --accent-bg: #dce4ff;
+
+  --ok-bg: #d5f0d5;
+  --ok-fg: #1e5a1e;
+  --warn-bg: #fbecc4;
+  --warn-fg: #6a5320;
+  --err-bg: #f6d7d7;
+  --err-fg: #8a2c2c;
+
+  --btn-bg: #f0f0f3;
+  --btn-bg-hover: #e4e4ea;
+  --btn-fg: #1e1e22;
+  --status-fg: #44444c;
+
+  --cm-selection: #b9d3ff;
+  --tok-keyword: #d73a49;
+  --tok-string: #032f62;
+  --tok-number: #005cc5;
+  --tok-comment: #6a737d;
+  --tok-fn: #6f42c1;
+  --tok-def: #6f42c1;
+  --tok-type: #6f42c1;
+  --tok-operator: #d73a49;
+  --tok-variable: #24292e;
+  --tok-builtin: #005cc5;
+
+  --img-bg: #ffffff;
+  --df-bg: #ffffff;
 }
 
 * {
@@ -54,13 +133,13 @@ button {
   font: inherit;
   padding: 0.25rem 0.7rem;
   border: 1px solid var(--border-strong);
-  background: #34343d;
-  color: #e0e0e6;
+  background: var(--btn-bg);
+  color: var(--btn-fg);
   border-radius: 4px;
   cursor: pointer;
 }
 button:hover:not(:disabled) {
-  background: #3f3f4a;
+  background: var(--btn-bg-hover);
 }
 button:disabled {
   opacity: 0.4;

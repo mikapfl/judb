@@ -1,5 +1,6 @@
 <script lang="ts">
   import { conn } from "./connection.svelte";
+  import { theme } from "./theme.svelte";
   import type { Command } from "../protocol";
 
   const send = (cmd: Command["cmd"]) => conn.send({ cmd } as Command);
@@ -10,6 +11,17 @@
       : conn.status === "connecting"
         ? "connecting"
         : conn.status,
+  );
+
+  const themeIcon = $derived(
+    theme.mode === "auto" ? "🌗" : theme.mode === "light" ? "☀️" : "🌙",
+  );
+  const themeTitle = $derived(
+    theme.mode === "auto"
+      ? `Theme: auto (${theme.resolved}) — click to force light`
+      : theme.mode === "light"
+        ? "Theme: light — click to force dark"
+        : "Theme: dark — click to follow system",
   );
 </script>
 
@@ -24,6 +36,9 @@
   <button disabled={!conn.paused} onclick={() => send("quit")}>■ Quit</button>
   <button class="interrupt" disabled={!conn.busy} onclick={() => conn.interrupt()}>
     ✋ Interrupt
+  </button>
+  <button class="theme" title={themeTitle} aria-label={themeTitle} onclick={() => theme.cycle()}>
+    {themeIcon}
   </button>
 </header>
 
@@ -49,7 +64,7 @@
     font-size: 11px;
     font-weight: 600;
     background: var(--border);
-    color: #c8c8d0;
+    color: var(--status-fg);
   }
   .status.paused {
     background: var(--ok-bg);
@@ -68,5 +83,10 @@
   .interrupt:not(:disabled) {
     color: var(--err-fg);
     border-color: var(--err-fg);
+  }
+  /* Compact icon toggle for auto/light/dark. */
+  .theme {
+    padding: 0.25rem 0.5rem;
+    line-height: 1;
   }
 </style>

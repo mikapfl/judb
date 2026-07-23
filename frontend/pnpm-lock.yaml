@@ -26,6 +26,9 @@ importers:
       '@codemirror/view':
         specifier: ^6.35.0
         version: 6.43.6
+      '@lezer/highlight':
+        specifier: ^1.2.3
+        version: 1.2.3
       anser:
         specifier: ^2.3.0
         version: 2.3.5
