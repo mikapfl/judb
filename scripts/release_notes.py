@@ -14,18 +14,24 @@ from __future__ import annotations
 
 import re
 import sys
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def read_version() -> str:
-    """The single source of truth: ``__version__`` in ``judb/__init__.py``."""
-    text = (ROOT / "judb" / "__init__.py").read_text()
-    match = re.search(r'^__version__\s*=\s*"([^"]+)"', text, re.MULTILINE)
-    if match is None:
-        raise SystemExit("could not find __version__ in judb/__init__.py")
-    return match.group(1)
+    """The single source of truth: ``[project] version`` in ``pyproject.toml``.
+
+    Read from the file rather than from ``judb.__version__``, which reports the
+    *installed* distribution — stale in the release workflow, where the version
+    is bumped but nothing is reinstalled before the tag is computed.
+    """
+    with (ROOT / "pyproject.toml").open("rb") as fh:
+        version = tomllib.load(fh).get("project", {}).get("version")
+    if not isinstance(version, str):
+        raise SystemExit("could not read [project] version from pyproject.toml")
+    return version
 
 
 def read_notes(version: str) -> str:

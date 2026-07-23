@@ -6,11 +6,17 @@ As of Phase 1, :func:`set_trace` also starts a localhost websocket server and
 opens a browser tab, so ``breakpoint()`` drops you into the browser UI.
 """
 
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _distribution_version
 
 from .console import Console
 from .debugger import Debugger
 from .protocol import CellResult, Output
+
+try:
+    __version__ = _distribution_version("judb")
+except PackageNotFoundError:  # running from a source tree, not installed
+    __version__ = "0.0.0+unknown"
 
 _active_debugger: Debugger | None = None
 

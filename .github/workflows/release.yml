@@ -10,6 +10,12 @@ on:
         options: [testpypi, pypi]
         default: testpypi
         required: true
+      bump:
+        description: "Version bump (pypi target only; 'none' releases the version already in pyproject.toml)"
+        type: choice
+        options: [none, patch, minor, major]
+        default: patch
+        required: true
 
 permissions:
   contents: read
@@ -32,45 +38,59 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Resolve version and build the changelog
+      - name: Bump version, build the changelog, commit
         id: meta
         run: |
           set -euo pipefail
+
+          if [ "${{ inputs.bump }}" != "none" ]; then
+            # --no-sync skips rebuilding the venv but still re-locks, so uv.lock
+            # tracks the new version. Skipping the re-lock (--frozen) would
+            # leave the lock stale and fail the `uv-lock` check on the next run.
+            uv version --bump "${{ inputs.bump }}" --no-sync
+          fi
+          # Read back from pyproject.toml, the authoritative source after a bump.
           version=$(python3 scripts/release_notes.py version)
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Releasing judb $version to ${{ inputs.target }}"
 
-          # A Test-PyPI dry run must not consume fragments or touch the repo:
-          # they are still needed for the real release.
+          # A dry run applies the bump too — so it publishes the version the
+          # real release *will* produce, not the last released one, which the
+          # index would reject as a duplicate. But it commits nothing: the bump
+          # and the fragments are both still needed for the real run. The build
+          # job re-applies this version from the output.
           if [ "${{ inputs.target }}" != "pypi" ]; then
-            echo "Dry run — leaving changelog fragments untouched."
+            echo "Dry run of judb $version — nothing committed."
             echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          echo "Releasing judb $version to pypi"
 
-          # Idempotent: a re-run after a mid-release failure must not try to
-          # build a changelog that already exists.
+          # Idempotent: a re-run after a mid-release failure must not rebuild a
+          # changelog section that already exists.
           if python3 scripts/release_notes.py notes >/dev/null 2>&1; then
             echo "CHANGELOG.md already has a section for $version — reusing it."
+          elif [ -z "$(find changelog.d -name '*.md' ! -name 'README.md' -print -quit)" ]; then
+            # Refuse to release with nothing to tell users. `README.md` is the
+            # instructions file in changelog.d/, not a fragment.
+            echo "::error::No changelog fragments, and CHANGELOG.md has no section for $version."
+            exit 1
+          else
+            # Consumes the fragments (towncrier `git rm`s them) and writes the
+            # section that becomes the draft release body.
+            uv run towncrier build --yes --version "$version"
+          fi
+
+          # One commit carrying the bump and the changelog — or none at all, if
+          # `bump: none` was re-run over an already-prepared tree.
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Nothing to commit; releasing the existing commit."
             echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
-          # Refuse to release with nothing to tell users. `README.md` is the
-          # instructions file in changelog.d/, not a fragment.
-          if [ -z "$(find changelog.d -name '*.md' ! -name 'README.md' -print -quit)" ]; then
-            echo "::error::No changelog fragments, and CHANGELOG.md has no section for $version."
-            exit 1
-          fi
-
-          # Consumes the fragments (towncrier `git rm`s them) and writes the
-          # section that becomes the draft release body.
-          uv run towncrier build --yes --version "$version"
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "docs: changelog for v$version"
+          git commit -m "release: v$version"
           git push origin "HEAD:${{ github.ref_name }}"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
@@ -99,6 +119,11 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
         working-directory: frontend
+
+      # Pin the version being released. For a `pypi` run the checked-out commit
+      # already carries it and this is a no-op; for a dry run it applies the
+      # bump that `prepare` computed but deliberately did not commit.
+      - run: uv version "${{ needs.prepare.outputs.version }}" --no-sync
 
       # Never ship an untested tree, even though CI covers main.
       - run: uv sync

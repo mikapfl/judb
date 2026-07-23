@@ -1,6 +1,6 @@
 [project]
 name = "judb"
-dynamic = ["version"]
+version = "0.1.0"
 description = "A visual debugger for datascience — pudb-style stepping with a notebook-style rich console that runs in the paused frame."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -50,11 +50,6 @@ dev = [
     "hatchling",
     "towncrier>=25.8.0",
 ]
-
-# Single source of truth for the version: judb/__init__.py (towncrier reads it
-# too, so a release bumps exactly one line).
-[tool.hatch.version]
-path = "judb/__init__.py"
 
 [build-system]
 requires = ["hatchling"]
@@ -123,7 +118,6 @@ safe_licenses = [
 # `towncrier build` collates them at release time. Fragments never collide, so
 # several branches in flight don't fight over CHANGELOG.md.
 [tool.towncrier]
-package = "judb"
 directory = "changelog.d"
 filename = "CHANGELOG.md"
 start_string = "<!-- towncrier release notes start -->\n"

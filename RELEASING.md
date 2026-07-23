@@ -64,24 +64,19 @@ writing; if someone takes it in the meantime, the project name has to change in
    make changelog-draft
    ```
 
-3. **Set the version, commit, push.** One line, in `judb/__init__.py`:
+   You do **not** bump the version or run `make changelog` — the release
+   workflow does both (step 4). `make changelog-draft` is only a preview and
+   consumes nothing.
 
-   ```python
-   __version__ = "0.1.0"
-   ```
+3. **Dry run to Test-PyPI.** Actions → *Release* → *Run workflow* → `target:
+   testpypi`, with the same `bump` you intend to release with.
 
-   That is the single source of truth — hatchling builds from it, towncrier
-   titles the release with it, and the workflow tags `v<version>`. Let CI go
-   green on `main`.
+   A dry run applies that bump *in memory only*, so it publishes the exact
+   version the real release will produce — not the last released one, which the
+   index would reject as a duplicate. Nothing is committed: the bump and the
+   fragments are both still needed for the real run.
 
-   You do **not** run `make changelog`: the release workflow does it for you
-   (step 5). `make changelog-draft` above is only a preview and consumes
-   nothing.
-
-4. **Dry run to Test-PyPI.** Actions → *Release* → *Run workflow* → `target:
-   testpypi`. A dry run deliberately leaves the fragments alone — they are still
-   needed for the real release. Then verify the artifact installs from there in
-   a throwaway venv:
+   Then verify the artifact installs from there in a throwaway venv:
 
    ```bash
    uv venv /tmp/judb-check && \
@@ -92,26 +87,30 @@ writing; if someone takes it in the meantime, the project name has to change in
 
    The extra index is needed because judb's dependencies live on real PyPI.
 
-5. **Release for real.** Actions → *Release* → *Run workflow* → `target: pypi`.
-   If you configured a required reviewer, approve the run when it pauses.
+4. **Release for real.** Actions → *Release* → *Run workflow* → `target: pypi`,
+   with the `bump` you want (`patch` / `minor` / `major`, or `none` to release
+   the version already in `pyproject.toml`). If you configured a required
+   reviewer, approve the run when it pauses.
 
    For a `pypi` target the workflow does the rest on its own:
 
-   - runs `towncrier build`, consuming the fragments, and **commits the
-     resulting `CHANGELOG.md` back to the branch** you dispatched from;
+   - bumps the version with `uv version` (updating `pyproject.toml` *and*
+     `uv.lock`) and runs `towncrier build`, consuming the fragments, then
+     **commits both back to the branch** you dispatched from as `release:
+     v<version>`;
    - builds, tests and smoke-installs the artifacts *from that commit*, then
      uploads them;
    - pushes an annotated tag `v<version>` at that same commit;
    - opens a **draft** GitHub release titled `judb <version>`, with the new
      `CHANGELOG.md` section as the body and the wheel + sdist attached.
 
-6. **Pull.** The changelog commit was made by CI, so your local branch is behind:
+5. **Pull.** The release commit was made by CI, so your local branch is behind:
 
    ```bash
    git pull
    ```
 
-7. **Publish the draft** at <https://github.com/mikapfl/judb/releases> once you
+6. **Publish the draft** at <https://github.com/mikapfl/judb/releases> once you
    have read it over. It is left as a draft deliberately — nothing is announced
    until you press the button.
 
@@ -119,7 +118,7 @@ writing; if someone takes it in the meantime, the project name has to change in
 
 Before anything is uploaded, the build job:
 
-- reads `__version__` and, for a `pypi` release, **refuses to continue if there
+- resolves the version (after any bump) and, for a `pypi` release, **refuses to continue if there
   is nothing to say** — no `changelog.d/` fragments *and* no existing
   `CHANGELOG.md` section for that version. Re-running a half-failed release is
   safe: if the section already exists, the changelog step is skipped rather
@@ -135,7 +134,7 @@ A broken artifact fails the release rather than reaching users.
 
 - **A version can never be re-uploaded.** Both indexes reject a re-used version
   even after deletion, so a bad release means bumping to the next patch.
-- **The release workflow pushes one commit** (the built changelog) to the branch
+- **The release workflow pushes one commit** (version bump + built changelog) to the branch
   it was dispatched from. If `main` ever gets branch protection requiring pull
   requests or reviews, that push will be rejected and the `prepare` job will
   fail — the fix is to allow the `github-actions` bot to bypass, or to go back

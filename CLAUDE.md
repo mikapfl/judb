@@ -69,8 +69,11 @@ release workflow runs it for a `pypi` release and commits the result back;
 `make changelog-draft` is a preview that consumes nothing. See
 `changelog.d/README.md` and `RELEASING.md`.
 
-**Version.** Single source of truth is `__version__` in `judb/__init__.py`;
-hatchling and towncrier both read it, so a release bumps exactly one line.
+**Version.** Single source of truth is `[project] version` in `pyproject.toml`
+(static, so `uv version` can bump it — it refuses dynamic versions).
+`judb.__version__` reports the *installed* distribution via `importlib.metadata`.
+You never bump by hand: the release workflow runs `uv version --bump <part>`
+from its `bump` input and commits the result.
 
 `release.yml` is **`workflow_dispatch` only** — never a push or tag trigger. It
 takes a `target` input (`testpypi` | `pypi`), rebuilds and re-verifies the

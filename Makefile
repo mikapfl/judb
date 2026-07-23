@@ -23,10 +23,10 @@ license:  ## Check dependency license compliance (pylic)
 	uv run pylic check
 
 changelog-draft:  ## Preview the release notes (keeps the fragments)
-	uv run towncrier build --draft
+	uv run towncrier build --draft --version $$(uv version --short)
 
 changelog:  ## Build CHANGELOG.md from changelog.d/ (normally CI's job; see RELEASING.md)
-	uv run towncrier build --yes
+	uv run towncrier build --yes --version $$(uv version --short)
 
 smoke:  ## Build wheel+sdist and verify a fresh install round-trips (packaging test)
 	./scripts/smoke_install.sh
