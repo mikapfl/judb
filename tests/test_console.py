@@ -1,11 +1,12 @@
-"""Console unit tests — headless rich capture and frame inspection.
+"""The embedded IPython console: headless rich capture and frame inspection.
 
-Originally the Phase 0 acceptance tests. The debugger+console *composition* half
-(pause, run a cell in-frame, get a PNG back) now lives in
-``tests/test_phase1.py::test_plot_paused_frame_over_websocket``, which exercises
-the same exit criterion end-to-end over the real websocket; the early
-queue-driving proof-of-concept version was dropped as redundant. What remains
-here is the console itself, which those integration tests only cover indirectly.
+Unit-level coverage of ``judb/console.py`` — what a cell's output turns into
+(mime bundles for text, HTML, PNG, streams, errors), the matplotlib-inline
+plumbing, and ``inspect`` for the Variables pane.
+
+The console's *composition* with the debugger — pause, run a cell in the paused
+frame, get a PNG back — is covered end-to-end over the websocket by
+``test_server.py::test_plot_paused_frame_over_websocket``.
 """
 
 import base64

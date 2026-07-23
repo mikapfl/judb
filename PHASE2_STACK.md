@@ -133,7 +133,7 @@ token-gated. Two dev modes:
 - **Vitest + @testing-library/svelte** for renderers and the `connection` store
   (pure logic, mime→DOM). **[DECIDED]**
 - **Playwright** e2e driving the *real* server end-to-end (the browser analog of
-  `tests/test_phase1.py`) — **[DECIDED]**: proves the Phase-2 exit criterion in an
+  `tests/test_server.py`) — **[DECIDED]**: proves the Phase-2 exit criterion in an
   actual browser. Accept the browser dep + CI weight.
 - Python-side headless websocket tests stay as the backend contract.
 

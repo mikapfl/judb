@@ -2,7 +2,7 @@
 then pause on the main thread so the process stays alive (and serving the built
 frontend) until the browser sends `continue`. Nested calls (main -> compute) give
 the call-stack pane something to select. Driven by a real browser, not a raw
-websocket (cf. tests/test_phase1.py, tests/test_phase2.py)."""
+websocket (cf. tests/test_server.py, tests/test_debugger.py)."""
 
 import numpy as np
 

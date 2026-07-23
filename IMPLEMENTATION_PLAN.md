@@ -286,7 +286,7 @@ validated spikes into `console.py` and a minimal `debugger.py`. *Exit:* stop at 
 page (`judb/static/index.html`): code pane with current line, a single console
 cell that runs in-frame and renders text/html/png, and continue/step buttons.
 *Exit:* set `breakpoint()`, browser opens, plot a paused DataFrame, step,
-continue — verified headlessly by `tests/test_phase1.py`.
+continue — verified headlessly by `tests/test_server.py`.
 
 **Phase 2 — The four-pane app (MVP). ✅ Done.** Svelte+CodeMirror UI;
 breakpoint gutter; variables pane (simple + expandable/lazy rich reprs); stack

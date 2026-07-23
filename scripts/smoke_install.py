@@ -6,7 +6,7 @@ Proves the packaging & install story (PHASE3_PLAN.md A1): the frontend bundle
 ships inside the artifact, the server serves it, and a headless ``set_trace``
 round-trip works using **only judb's runtime dependencies**. In particular it
 imports no numpy/pandas — those are dev-only now, so a fresh ``pip install judb``
-must not need them. Mirrors ``tests/test_phase1.py``, reduced to what a clean
+must not need them. Mirrors ``tests/test_server.py``, reduced to what a clean
 install has to satisfy.
 
 Driven by ``scripts/smoke_install.sh`` / ``make smoke``.

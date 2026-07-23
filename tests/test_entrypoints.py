@@ -23,32 +23,23 @@
 
 import asyncio
 import os
-import re
 import subprocess
 import sys
 import textwrap
 import threading
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
 
-from aiohttp import ClientSession, ClientWebSocketResponse
+from aiohttp import ClientSession
+from helpers import (
+    pause_then_continue,
+    read_judb_url,
+    recv_type,
+    ws_url,
+)
 
 import judb
 from judb import Debugger
-
-
-async def _recv_type(ws: ClientWebSocketResponse, want: str) -> dict[str, Any]:
-    while True:
-        msg = await asyncio.wait_for(ws.receive_json(), timeout=10)
-        if msg.get("type") == want:
-            return msg
-
-
-def _ws_url(url: str) -> str:
-    q = urlparse(url)
-    token = parse_qs(q.query)["token"][0]
-    return f"ws://{q.hostname}:{q.port}/ws?token={token}"
 
 
 def _make_exception() -> BaseException:
@@ -82,8 +73,8 @@ def test_postmortem_over_websocket():
     thread.start()
 
     async def flow() -> None:
-        async with ClientSession() as session, session.ws_connect(_ws_url(url)) as ws:
-            paused = await _recv_type(ws, "paused")
+        async with ClientSession() as session, session.ws_connect(ws_url(url)) as ws:
+            paused = await recv_type(ws, "paused")
             assert paused.get("postmortem") is True
             assert paused["exception"] == {"type": "ValueError", "message": "kaboom"}
             # Innermost (failing) frame is selected.
@@ -92,42 +83,18 @@ def test_postmortem_over_websocket():
 
             # The console inspects the crashed frame's real locals.
             await ws.send_json({"cmd": "execute_cell", "code": "sum(values)"})
-            result = await _recv_type(ws, "cell_result")
+            result = await recv_type(ws, "cell_result")
             assert result["success"]
             texts = [o["data"].get("text/plain") for o in result["outputs"]]
             assert "60" in texts
 
             # Resuming a post-mortem just leaves the debugger.
             await ws.send_json({"cmd": "continue"})
-            await _recv_type(ws, "running")
+            await recv_type(ws, "running")
 
     asyncio.run(flow())
     thread.join(timeout=5)
     assert not thread.is_alive()
-
-
-def _read_judb_url(proc: subprocess.Popen[str], lines: list[str]) -> str:
-    """Drain the subprocess output in a thread and return judb's UI URL.
-
-    Draining continuously keeps the pipe from filling (which would block the
-    paused subprocess once it resumes and writes its report).
-    """
-    found = threading.Event()
-    box: dict[str, str] = {}
-
-    def reader() -> None:
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            lines.append(line)
-            m = re.search(r"judb: debugger UI at (\S+)", line)
-            if m and "url" not in box:
-                box["url"] = m.group(1)
-                found.set()
-
-    threading.Thread(target=reader, daemon=True).start()
-    if not found.wait(timeout=30):
-        raise AssertionError("never saw judb URL. output:\n" + "".join(lines))
-    return box["url"]
 
 
 def test_pytest_pdbcls_lands_at_failure(tmp_path: Path):
@@ -158,16 +125,16 @@ def test_pytest_pdbcls_lands_at_failure(tmp_path: Path):
     )  # fmt: skip
     lines: list[str] = []
     try:
-        url = _read_judb_url(proc, lines)
+        url = read_judb_url(proc, lines)
 
         async def flow() -> dict[str, Any]:
             async with (
                 ClientSession() as session,
-                session.ws_connect(_ws_url(url)) as ws,
+                session.ws_connect(ws_url(url)) as ws,
             ):
-                paused = await _recv_type(ws, "paused")
+                paused = await recv_type(ws, "paused")
                 await ws.send_json({"cmd": "continue"})
-                await _recv_type(ws, "running")
+                await recv_type(ws, "running")
                 return paused
 
         paused = asyncio.run(flow())
@@ -204,13 +171,13 @@ def test_repeated_set_trace_reuses_one_server():
     thread.start()
 
     async def flow() -> tuple[dict[str, Any], dict[str, Any]]:
-        async with ClientSession() as session, session.ws_connect(_ws_url(url)) as ws:
-            paused_one = await _recv_type(ws, "paused")
+        async with ClientSession() as session, session.ws_connect(ws_url(url)) as ws:
+            paused_one = await recv_type(ws, "paused")
             await ws.send_json({"cmd": "continue"})
-            await _recv_type(ws, "running")
-            paused_two = await _recv_type(ws, "paused")
+            await recv_type(ws, "running")
+            paused_two = await recv_type(ws, "paused")
             await ws.send_json({"cmd": "continue"})
-            await _recv_type(ws, "running")
+            await recv_type(ws, "running")
             return paused_one, paused_two
 
     try:
@@ -256,16 +223,16 @@ def test_set_trace_on_last_line_pauses_in_user_code(tmp_path: Path):
     )
     lines: list[str] = []
     try:
-        url = _read_judb_url(proc, lines)
+        url = read_judb_url(proc, lines)
 
         async def flow() -> dict[str, Any]:
             async with (
                 ClientSession() as session,
-                session.ws_connect(_ws_url(url)) as ws,
+                session.ws_connect(ws_url(url)) as ws,
             ):
-                paused = await _recv_type(ws, "paused")
+                paused = await recv_type(ws, "paused")
                 await ws.send_json({"cmd": "continue"})
-                await _recv_type(ws, "running")
+                await recv_type(ws, "running")
                 return paused
 
         paused = asyncio.run(flow())
@@ -279,15 +246,6 @@ def test_set_trace_on_last_line_pauses_in_user_code(tmp_path: Path):
     finally:
         if proc.poll() is None:
             proc.kill()
-
-
-async def _pause_then_continue(url: str) -> dict[str, Any]:
-    """Connect, capture the first `paused`, resume, and return that message."""
-    async with ClientSession() as session, session.ws_connect(_ws_url(url)) as ws:
-        paused = await _recv_type(ws, "paused")
-        await ws.send_json({"cmd": "continue"})
-        await _recv_type(ws, "running")
-        return paused
 
 
 def test_python_m_judb_runs_script(tmp_path: Path):
@@ -318,7 +276,7 @@ def test_python_m_judb_runs_script(tmp_path: Path):
     )
     lines: list[str] = []
     try:
-        paused = asyncio.run(_pause_then_continue(_read_judb_url(proc, lines)))
+        paused = asyncio.run(pause_then_continue(read_judb_url(proc, lines)))
         assert Path(paused["filename"]).name == "argv_demo.py"
         assert paused["function"] == "<module>"
         assert paused["lineno"] == 1  # stop-on-entry: nothing has run yet
@@ -356,7 +314,7 @@ def test_python_m_judb_runs_module(tmp_path: Path):
     )
     lines: list[str] = []
     try:
-        paused = asyncio.run(_pause_then_continue(_read_judb_url(proc, lines)))
+        paused = asyncio.run(pause_then_continue(read_judb_url(proc, lines)))
         assert Path(paused["filename"]).name == "mod.py"
         assert paused["function"] == "<module>"
         assert proc.wait(timeout=30) == 0
@@ -388,7 +346,7 @@ def _run_pytest_paused(
     )  # fmt: skip
     lines: list[str] = []
     try:
-        paused = asyncio.run(_pause_then_continue(_read_judb_url(proc, lines)))
+        paused = asyncio.run(pause_then_continue(read_judb_url(proc, lines)))
         return paused, proc.wait(timeout=30), "".join(lines)
     finally:
         if proc.poll() is None:

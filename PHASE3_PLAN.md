@@ -55,7 +55,7 @@ proof that a clean install works.
   and `judb/static/index.html` is present. The sdist path is the fragile one (it
   reuses the shipped bundle instead of rebuilding) — it needs an explicit test.
   *Exit:* `pip install dist/judb-*.whl` in a fresh venv, then a scripted headless
-  `set_trace(open_browser=False)` round-trip (reuse `tests/test_phase1.py`'s ws
+  `set_trace(open_browser=False)` round-trip (reuse `tests/test_server.py`'s ws
   harness) passes.
 - **Python floor.** `requires-python = ">=3.13"` is aggressive for a tool that
   wants adoption. **[OPEN]** Is 3.13 a hard floor, or should we widen to 3.11/3.12
@@ -217,7 +217,7 @@ No config layer exists. Introduce a minimal one rather than a big framework.
   `watches`, and `paused` gains an optional exception payload. Mirror each in
   `judb/protocol.py` **and** `frontend/src/protocol.ts`.
 - **Tests:** every backend command gets a Python ws test (extend
-  `tests/test_phase2.py` or a new `test_phase3.py`); the exception-pause and
+  `tests/test_debugger.py` or `tests/test_entrypoints.py`); the exception-pause and
   conditional-bp paths get Playwright coverage. Keep `make test` + `make
   frontend-test` + the Playwright e2e green.
 - **Docs:** fold the Phase-3 outcomes back into `IMPLEMENTATION_PLAN.md` §5 (as was

@@ -1,37 +1,27 @@
-"""Phase 1 exit criterion, verified without a browser.
+"""The websocket server: transport, auth, and the whole stack over one socket.
 
-Drives the *real* websocket server end-to-end: pause in a frame, plot the
-paused frame's array in-frame, get an ``image/png`` bundle back over the wire,
-then continue to completion. This is the browser's job reduced to a socket.
+``test_plot_paused_frame_over_websocket`` is the headline flow reduced to a
+socket — pause in a frame, plot the paused frame's array *in that frame*, get an
+``image/png`` bundle back over the wire, continue to completion — so it doubles
+as the smoke test for everything below the browser.
 """
 
 import asyncio
 import threading
-from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 import numpy as np
-from aiohttp import ClientSession, ClientWebSocketResponse
+from aiohttp import ClientSession
+from helpers import recv_type, ws_url
 
 from judb import Debugger
 
 PLOT_CELL = "import matplotlib.pyplot as plt\nplt.plot(data)"
 
 
-async def _recv_type(ws: ClientWebSocketResponse, want: str) -> dict[str, Any]:
-    """Receive messages until one of type ``want`` arrives."""
-    while True:
-        msg = await asyncio.wait_for(ws.receive_json(), timeout=10)
-        if msg.get("type") == want:
-            return msg
-
-
 def test_plot_paused_frame_over_websocket():
     dbg = Debugger()
     url = dbg.start_server(open_browser=False)
-    q = urlparse(url)
-    token = parse_qs(q.query)["token"][0]
-    ws_url = f"ws://{q.hostname}:{q.port}/ws?token={token}"
 
     def debuggee() -> None:
         data = np.linspace(0.0, 10.0, 50)
@@ -44,18 +34,18 @@ def test_plot_paused_frame_over_websocket():
     thread.start()
 
     async def flow() -> None:
-        async with ClientSession() as session, session.ws_connect(ws_url) as ws:
-            paused = await _recv_type(ws, "paused")
+        async with ClientSession() as session, session.ws_connect(ws_url(url)) as ws:
+            paused = await recv_type(ws, "paused")
             assert "data" in paused["locals"]
             assert "np.linspace" in paused["source"]
 
             await ws.send_json({"cmd": "execute_cell", "code": PLOT_CELL})
-            result = await _recv_type(ws, "cell_result")
+            result = await recv_type(ws, "cell_result")
             pngs = [o for o in result["outputs"] if "image/png" in o["data"]]
             assert pngs, "expected an image/png bundle from plt.plot(data)"
 
             await ws.send_json({"cmd": "continue"})
-            await _recv_type(ws, "running")
+            await recv_type(ws, "running")
 
     asyncio.run(flow())
     thread.join(timeout=5)

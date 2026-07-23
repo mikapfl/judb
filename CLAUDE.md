@@ -39,7 +39,7 @@ pure-Python execution) are all done. Next up is Phase 3 (fit & finish — see
 - `make test` — run all tests (`uv run pytest`).
 - `make lint` — run all pre-commit hooks across the repo (ruff check+format, ty, uv-lock).
 - `make help` — list make targets (self-documenting from `## ` comments).
-- `uv run pytest tests/test_phase1.py::test_plot_paused_frame_over_websocket` — run a single test.
+- `uv run pytest tests/test_server.py::test_plot_paused_frame_over_websocket` — run a single test.
 - `uv run pytest -s` — run tests showing the captured PNG-byte-count prints.
 - `uv run ty check` — type-check only.
 - `uv run python scripts/demo_p2.py` — run a demo debuggee and drive it from the
@@ -47,6 +47,29 @@ pure-Python execution) are all done. Next up is Phase 3 (fit & finish — see
 
 Use `uv` for everything (deps live in `pyproject.toml`; `uv sync` to install  - or use `uv add` directly).
 pre-commit is installed as a git hook, so commits are gated on the same checks as `make lint`.
+
+### Tests (`tests/`, organised by topic)
+
+Files are named for **what they cover**, not the phase that introduced them:
+
+- `test_console.py` — the embedded IPython console: mime-bundle capture,
+  matplotlib-inline, `inspect` for the Variables pane.
+- `test_server.py` — websocket transport + token auth, and the whole stack over
+  one socket (pause → plot in-frame → PNG → continue).
+- `test_debugger.py` — driving a paused debuggee: frames (`select_frame`,
+  `expand`, `complete`), breakpoints, interrupts, and signals (a real terminal
+  Ctrl+C over a pty).
+- `test_entrypoints.py` — how users start judb: `pytest --pdbcls` (post-mortem,
+  `--trace`, `breakpoint()`), `python -m judb` (script and `-m module`), and
+  `set_trace` hardening.
+- `test_mpl_backend.py` — the `%matplotlib judb` WebAgg backend.
+- `helpers.py` — shared drivers (`ws_url`, `recv_type`, `read_judb_url`,
+  `read_pty_for_url`, …). Imported as `from helpers import ...`: `tests/` has no
+  `__init__.py`, so pytest's prepend import mode puts it on `sys.path`.
+
+Prefer adding to the matching topic over creating a new file. Entry points and
+anything involving signals or a controlling terminal need a **real subprocess**
+(and a pty) — in-process tests silently miss those paths.
 
 ### Frontend (`frontend/`, Svelte 5 + Vite + pnpm)
 
