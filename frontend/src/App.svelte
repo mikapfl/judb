@@ -23,31 +23,33 @@
 <Toolbar />
 
 <main>
-  <Splitpanes theme="" class="judb-split">
-    <Pane size={62} minSize={25}>
-      <Splitpanes horizontal theme="" class="judb-split">
-        <Pane size={60} minSize={15}>
+  <!-- Primary divider is top/bottom: the working area (Source + Console) gets
+       most of the height; Variables + Call stack sit side by side underneath. -->
+  <Splitpanes horizontal theme="" class="judb-split">
+    <Pane size={80} minSize={30}>
+      <Splitpanes theme="" class="judb-split">
+        <Pane size={50} minSize={20}>
           <PaneBox title="Source">
             <SourcePane />
           </PaneBox>
         </Pane>
-        <Pane size={40} minSize={15}>
-          <PaneBox title="Console — runs in the paused frame">
+        <Pane size={50} minSize={20}>
+          <PaneBox title="Notebook console — runs in the paused frame">
             <ConsolePane />
           </PaneBox>
         </Pane>
       </Splitpanes>
     </Pane>
-    <Pane size={38} minSize={15}>
-      <Splitpanes horizontal theme="" class="judb-split">
-        <Pane size={55} minSize={10}>
-          <PaneBox title="Variables">
-            <VariablesPane />
-          </PaneBox>
-        </Pane>
-        <Pane size={45} minSize={10}>
+    <Pane size={20} minSize={10}>
+      <Splitpanes theme="" class="judb-split">
+        <Pane size={45} minSize={15}>
           <PaneBox title="Call stack">
             <StackPane />
+          </PaneBox>
+        </Pane>
+        <Pane size={55} minSize={15}>
+          <PaneBox title="Variables">
+            <VariablesPane />
           </PaneBox>
         </Pane>
       </Splitpanes>
