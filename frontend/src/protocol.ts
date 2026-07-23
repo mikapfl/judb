@@ -110,6 +110,19 @@ export interface BreakpointsMsg {
   error?: string;
 }
 
+/** An interactive-matplotlib (WebAgg) message for figure `id`, en route from the
+ *  figure's canvas to its browser client: either a JSON control message (`json`)
+ *  or a base64-encoded PNG frame (`blob`). See judb/mpl_backend.py. */
+export interface MplMsg {
+  type: "mpl";
+  id: string;
+  json?: unknown;
+  blob?: string;
+}
+
+/** Cell-output mime carrying `{ id }` — mounts an interactive WebAgg canvas. */
+export const WEBAGG_MIME = "application/vnd.judb.webagg+json";
+
 export type ServerMsg =
   | PausedMsg
   | FrameSelectedMsg
@@ -119,6 +132,7 @@ export type ServerMsg =
   | ExpandedMsg
   | CompletionsMsg
   | BreakpointsMsg
+  | MplMsg
   | ErrorMsg;
 
 // --- client -> server ---------------------------------------------------
@@ -135,4 +149,5 @@ export type Command =
   | { cmd: "complete"; code: string; cursor: number }
   | { cmd: "set_break"; filename: string; line: number }
   | { cmd: "clear_break"; filename: string; line: number }
+  | { cmd: "mpl_event"; id: string; content: unknown }
   | { cmd: "interrupt" };

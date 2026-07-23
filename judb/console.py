@@ -36,6 +36,7 @@ from IPython.core.interactiveshell import InteractiveShell
 from IPython.core.pylabtools import select_figure_formats
 from matplotlib_inline.backend_inline import flush_figures
 
+from . import mpl_backend
 from .protocol import CellResult, Output
 
 # The buffer the capture classes append to while a cell runs. IPython owns the
@@ -187,6 +188,25 @@ class Console:
         self._injected: set[str] = set()
         self._shadowed: dict[str, Any] = {}
 
+    def _flush_figures(self) -> None:
+        """Turn figures a cell created into outputs. Under judb's interactive
+        backend (``%matplotlib judb``) each new figure becomes a live WebAgg
+        canvas (a mount notice); otherwise inline PNGs (``%matplotlib inline``)."""
+        if mpl_backend.is_active():
+            for fig_id in mpl_backend.announce_new_figures():
+                if _capture is not None:
+                    _capture.append(
+                        Output(
+                            "display_data",
+                            {
+                                mpl_backend.WEBAGG_MIME: {"id": fig_id},
+                                "text/plain": f"<interactive matplotlib figure #{fig_id}>",
+                            },
+                        )
+                    )
+        else:
+            flush_figures()
+
     def run_cell(self, code: str, frame: FrameType | None = None) -> CellResult:
         """Execute ``code`` and return the captured rich outputs.
 
@@ -209,8 +229,9 @@ class Console:
                 contextlib.redirect_stderr(stderr),
             ):
                 result = self.shell.run_cell(code, store_history=True)
-                # Turn any figures created by the cell into image/png bundles.
-                flush_figures()
+                # Turn any figures the cell created into outputs (inline PNGs, or
+                # a live interactive canvas under `%matplotlib_interactive`).
+                self._flush_figures()
         finally:
             _capture = None
 

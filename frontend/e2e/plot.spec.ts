@@ -165,6 +165,58 @@ test("interrupt a runaway console cell", async ({ page }) => {
   }
 });
 
+test("interactive matplotlib: render an in-frame plot, then zoom it", async ({ page }) => {
+  const { proc, url } = await startDebuggee();
+
+  try {
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+
+    // Opt into the WebAgg-backed interactive backend, then plot in a new cell.
+    await page.locator(".cell .cm-content").first().click();
+    await page.keyboard.type("%matplotlib judb");
+    await page.getByRole("button", { name: "Run cell" }).first().click();
+
+    await page.locator(".add-cell").click();
+    await page.keyboard.type("import matplotlib.pyplot as plt; plt.plot(data); None");
+    await page.getByRole("button", { name: "Run cell" }).nth(1).click();
+
+    // The interactive canvas mounts, sizes to the figure, and renders real
+    // pixels (a blank canvas serialises to ~3.4 KB; a rendered one is far more).
+    const canvas = page.locator(".webagg-host canvas").first();
+    await canvas.waitFor({ timeout: 15_000 });
+    await expect
+      .poll(async () => canvas.evaluate((c: HTMLCanvasElement) => c.width), { timeout: 10_000 })
+      .toBeGreaterThan(300);
+    const before = await canvas.evaluate((c: HTMLCanvasElement) => c.toDataURL());
+    expect(before.length).toBeGreaterThan(8000);
+
+    // The WebAgg navigation toolbar is present (icons served from /_images; the
+    // zoom tool's icon carries a "Zoom to rectangle" alt/tooltip).
+    const zoom = page.locator(".webagg-host img[alt*='Zoom to rectangle']");
+    await expect(zoom).toBeVisible();
+
+    // Select the zoom tool (wait for the mode to activate on the backend), then
+    // drag a rubberband well inside the axes: the figure re-renders server-side
+    // (in the paused frame) and the canvas content changes.
+    await zoom.click();
+    await page.waitForTimeout(400);
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error("canvas has no bounding box");
+    await page.mouse.move(box.x + 180, box.y + 150);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 400, box.y + 320, { steps: 15 });
+    await page.mouse.up();
+    await expect
+      .poll(async () => canvas.evaluate((c: HTMLCanvasElement) => c.toDataURL()), {
+        timeout: 10_000,
+      })
+      .not.toBe(before);
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
+
 test("clicking an outer stack frame retargets the variables pane", async ({ page }) => {
   const { proc, url } = await startDebuggee();
 

@@ -76,6 +76,16 @@ class DebugServer:
     async def _serve(self) -> None:
         app = web.Application()
         app.router.add_get("/", self._handle_index)
+        app.router.add_get("/_mpl.js", self._handle_mpl_js)
+        # matplotlib's WebAgg toolbar icons (`<img src="_images/…">`), served from
+        # matplotlib's own image directory — the same mapping its Tornado backend
+        # uses. Static, non-sensitive glyphs, so served without the token (unlike
+        # the app/ws). Guarded so a missing dir can never wedge server startup.
+        import matplotlib
+
+        images = Path(matplotlib.get_data_path()) / "images"
+        if images.is_dir():
+            app.router.add_static("/_images/", images)
         app.router.add_get("/ws", self._handle_ws)
         runner = web.AppRunner(app)
         await runner.setup()
@@ -109,6 +119,16 @@ class DebugServer:
                 )
             )
         return web.FileResponse(index)
+
+    async def _handle_mpl_js(self, request: web.Request) -> web.Response:
+        """Serve *this* matplotlib's WebAgg client JS, so the interactive-figure
+        client always matches the installed backend (see mpl_backend.py). Only
+        loaded on demand, when the first interactive figure appears."""
+        self._check_token(request)
+        from matplotlib.backends.backend_webagg_core import FigureManagerWebAgg
+
+        js = FigureManagerWebAgg.get_javascript()
+        return web.Response(text=js, content_type="application/javascript")
 
     async def _handle_ws(self, request: web.Request) -> web.WebSocketResponse:
         self._check_token(request)

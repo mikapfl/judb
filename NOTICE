@@ -18,3 +18,11 @@ Project Jupyter's notebook / nbconvert output stylesheets
 (https://jupyter.org), which are licensed under the BSD 3-Clause license. A copy
 of Jupyter's license and attribution notice is included in the licenses/
 directory (see licenses/jupyter-LICENSE.txt).
+
+judb's interactive-plotting backend (%matplotlib judb) reuses Matplotlib's
+WebAgg engine (https://matplotlib.org): it subclasses Matplotlib's WebAgg
+canvas/manager classes and serves Matplotlib's own WebAgg client JavaScript
+(mpl.js) and toolbar image assets, unmodified, to the browser. Matplotlib is
+distributed under a BSD-compatible (PSF-style) license. A copy of Matplotlib's
+license and copyright notice is included in the licenses/ directory (see
+licenses/matplotlib-LICENSE.txt).

@@ -17,6 +17,11 @@ dependencies = [
     "pre-commit>=4.6.1",
 ]
 
+[project.entry-points."matplotlib.backend"]
+# Registers judb's interactive WebAgg backend so `%matplotlib judb` resolves it
+# (the same mechanism matplotlib-inline uses for `%matplotlib inline`).
+judb = "judb.mpl_backend"
+
 [project.optional-dependencies]
 # Rich objects used only by scripts/demo_rich.py — heavyweight datascience viz
 # libraries we deliberately keep out of a normal `pip install judb`.

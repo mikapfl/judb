@@ -6,6 +6,7 @@ import type {
   CompletionsMsg,
   FrameView,
   MimeBundle,
+  MplMsg,
   Output,
   ServerMsg,
   StackFrame,
@@ -73,6 +74,11 @@ class Connection {
   // result to the cell that asked for it (any cell can be re-run, not just the
   // newest), independent of the notebook's current order.
   #pendingExec: number[] = [];
+  // Interactive-matplotlib (WebAgg) figures: a handler per live canvas, keyed by
+  // figure id, plus a buffer for messages that arrive before the canvas mounts
+  // (the backend may send an initial frame before the cell output renders).
+  #mplHandlers = new Map<string, (msg: MplMsg) => void>();
+  #mplBuffer = new Map<string, MplMsg[]>();
 
   get paused(): boolean {
     return this.status === "paused";
@@ -182,6 +188,25 @@ class Connection {
     this.send({ cmd: "interrupt" });
   }
 
+  // --- interactive matplotlib (WebAgg) --------------------------------
+  //
+  // A mounted canvas registers a handler for its figure id; the store replays
+  // any messages that arrived before it mounted. `sendMplEvent` forwards a
+  // browser-side canvas event (zoom/pan/draw/…) to the figure on the backend.
+  registerMpl(id: string, handler: (msg: MplMsg) => void): () => void {
+    this.#mplHandlers.set(id, handler);
+    const buffered = this.#mplBuffer.get(id);
+    if (buffered) {
+      this.#mplBuffer.delete(id);
+      for (const msg of buffered) handler(msg);
+    }
+    return () => this.#mplHandlers.delete(id);
+  }
+
+  sendMplEvent(id: string, content: unknown): void {
+    this.send({ cmd: "mpl_event", id, content });
+  }
+
   // --- lazy variable inspection ---------------------------------------
   //
   // A pane calls expand(path) to fetch a variable's repr + children; the result
@@ -264,6 +289,13 @@ class Connection {
       case "completions":
         this.#pendingCompletions.shift()?.(msg);
         break;
+      case "mpl": {
+        // Deliver to the figure's canvas, or buffer until it mounts.
+        const handler = this.#mplHandlers.get(msg.id);
+        if (handler) handler(msg);
+        else (this.#mplBuffer.get(msg.id) ?? this.#mplBuffer.set(msg.id, []).get(msg.id)!).push(msg);
+        break;
+      }
       case "breakpoints":
         // A set/clear reply for the file the source pane is showing. On a
         // rejected line (`error`), `lines` simply omits it, so the gutter dot

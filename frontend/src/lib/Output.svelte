@@ -2,8 +2,10 @@
   import Anser from "anser";
   import { marked } from "marked";
   import type { Output } from "../protocol";
+  import { WEBAGG_MIME } from "../protocol";
   import { theme } from "./theme.svelte";
   import { htmlDoc, vizDoc, vizMime } from "./richOutput";
+  import WebAggFigure from "./WebAggFigure.svelte";
 
   let { output }: { output: Output } = $props();
 
@@ -24,6 +26,10 @@
 
   const d = $derived(output.data);
   const richMime = $derived(RICH_MIMES.find((m) => d[m] != null));
+
+  // An interactive matplotlib figure mount notice (WebAgg) — takes precedence
+  // over its text/plain placeholder.
+  const webaggId = $derived((d[WEBAGG_MIME] as { id: string } | undefined)?.id);
 
   const svgDataUri = (svg: string) =>
     `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
@@ -80,7 +86,9 @@
   });
 </script>
 
-{#if output.kind === "stream"}
+{#if webaggId != null}
+  <WebAggFigure id={webaggId} />
+{:else if output.kind === "stream"}
   <pre class="out stream" class:stderr={d.name === "stderr"}>{@html ansi(d.text ?? "")}</pre>
 {:else if output.kind === "error"}
   <pre class="out error">{@html ansi(errorText)}</pre>

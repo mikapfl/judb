@@ -24,6 +24,7 @@ from collections.abc import Iterable
 from types import FrameType, TracebackType
 from typing import TYPE_CHECKING, Any
 
+from . import mpl_backend
 from .console import Console
 from .protocol import CellResult
 
@@ -50,6 +51,10 @@ class Debugger(bdb.Bdb):
         # from the *server* thread to stop a runaway cell.
         self._debuggee_tid: int | None = None
         self._executing = False
+        # Route interactive-matplotlib (WebAgg) figure⇄browser messages onto our
+        # outbound channel. Events flow back as `mpl_event` commands, handled on
+        # this (debuggee) thread — the one that owns the figures. See mpl_backend.
+        mpl_backend.set_emitter(self._emit)
 
     # --- bdb hooks --------------------------------------------------------
 
@@ -118,6 +123,14 @@ class Debugger(bdb.Bdb):
 
         if cmd == "complete":
             self._complete(msg.get("code", ""), msg.get("cursor", 0))
+            return False
+
+        if cmd == "mpl_event":
+            # An interactive-figure event (zoom/pan/resize/draw). Dispatched here,
+            # on the debuggee thread that owns the figure, while paused.
+            fig_id, content = msg.get("id"), msg.get("content")
+            if isinstance(fig_id, str) and isinstance(content, dict):
+                mpl_backend.dispatch(fig_id, content)
             return False
 
         if cmd == "expand":
