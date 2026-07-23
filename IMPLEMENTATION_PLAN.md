@@ -363,9 +363,6 @@ contract (§3) was meant to buy us.
   output iframe bakes in per-theme colours. `frontend/src/lib/theme.svelte.ts`.
 - **Tests:** `richOutput` + `theme` unit suites and output-precedence / markdown /
   DataFrame-CSS cases (Vitest); Playwright e2e still green (6/6).
-- **Still open in 2a:** broader layout/design polish and small usability passes;
-  and a committed test for *real* plot interactivity — currently covered only by a
-  CDN-render probe, not a checked-in e2e (the viz libraries aren't judb deps).
 
 **Phase 3 — Fit & finish.** Conditional breakpoints, watch expressions, source
 across multiple files, save/load console cells (notebook export), settings,
@@ -373,13 +370,23 @@ packaging & a clean install story. *Optional/cheap:* surface the standalone SPA
 inside JupyterLab via `jupyter-server-proxy` (near-zero effort, gets us "inside
 Lab" for demos without the labextension toolchain).
 
+**Phase 3a – saved debug expressions.** Add a way to save + load cell sources
+close to the source, so repeated debugging can re-use cells. Things to consider
+(not yet decided what to implement):
+- "Setup" cells, which should always be loaded (per user? per project?)
+- "Local" cells, which should be saved locally and loaded on the next use
+  (per project? per file? per function? per line even?)
+- "Project" cells, which should be committed to version control and loaded
+  by anyone debugging this project (per project? per file? per function?
+  per line even? security/trust?)
+
 **Phase 4 — Differentiators / stretch.** `sys.monitoring` fast breakpoints;
 `ipywidgets`/`%matplotlib widget` via a Comm channel (needs kernel-comm work);
 the data-flow / call-graph pane hinted at in the requirements; remote &
 multi-thread/async debugging; *optional* native **JupyterLab-extension frontend**
 (the third model in §3) as an additional distribution channel over the same backend.
 
-**Proposed MVP line: end of Phase 2.**
+**Proposed MVP line: end of Phase 2a.**
 
 ---
 
