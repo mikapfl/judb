@@ -165,6 +165,50 @@ test("interrupt a runaway console cell", async ({ page }) => {
   }
 });
 
+test("interrupt a cell blocked in a C call, not just a Python loop", async ({ page }) => {
+  // The user story: a console cell is taking forever and the Interrupt button
+  // stops it *now*, even though execution is inside a blocking C call rather
+  // than a Python loop the interpreter can break between bytecodes. That works
+  // because judb sends a real SIGINT when the debuggee is the main thread, so
+  // the syscall returns EINTR — exactly as Ctrl+C would.
+  //
+  // (Limit worth knowing: this covers blocking *syscalls*. A long CPU-bound C
+  // routine such as a big BLAS call still only unwinds once it returns to
+  // Python — a CPython-wide constraint, cf. Jupyter's "interrupt kernel".)
+  const { proc, url } = await startDebuggee();
+
+  try {
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+
+    const cell = page.locator(".cell .cm-content").first();
+    await cell.click();
+    await page.keyboard.type("import time; time.sleep(5)");
+    await page.getByRole("button", { name: "Run cell" }).first().click();
+
+    const interrupt = page.getByRole("button", { name: "Interrupt" });
+    await page.locator(".cell .pending").waitFor({ timeout: 10_000 });
+    await expect(interrupt).toBeEnabled();
+    // The pending marker is optimistic, set before the backend starts the cell;
+    // interrupting ahead of that is a no-op, so let the debuggee get into it.
+    await page.waitForTimeout(600);
+
+    const startedAt = Date.now();
+    await interrupt.click();
+    await expect(page.locator(".cells")).toContainText("KeyboardInterrupt", {
+      timeout: 15_000,
+    });
+    const elapsed = Date.now() - startedAt;
+
+    // ~4.4s of the sleep was still to run. Breaking out well inside that is the
+    // whole point: without a real SIGINT we would have waited the sleep out.
+    expect(elapsed).toBeLessThan(2000);
+    await expect(interrupt).toBeDisabled();
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
+
 test("interactive matplotlib: render an in-frame plot, then zoom it", async ({ page }) => {
   const { proc, url } = await startDebuggee();
 

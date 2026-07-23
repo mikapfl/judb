@@ -378,50 +378,6 @@ def test_interrupt_stops_a_runaway_cell():
     assert not thread.is_alive()
 
 
-def test_interrupt_wakes_a_blocking_call_on_the_main_thread():
-    """When the debuggee is the main thread, ``interrupt`` sends a real SIGINT,
-    which — like Ctrl+C — breaks out of a blocking C call such as ``time.sleep``,
-    not just a pure-Python loop. Driven directly over the queues (no server) so
-    the debuggee runs on the test's main thread."""
-    dbg = Debugger()
-    collected: dict[str, Any] = {}
-
-    def driver() -> None:
-        paused = dbg.outbound.get(timeout=15)
-        assert paused["type"] == "paused"
-        # A cell that would block for 30s in C if not interrupted.
-        dbg.inbound.put({"cmd": "execute_cell", "code": "import time; time.sleep(30)"})
-        # Wait until the cell is actually running before interrupting it.
-        deadline = time.monotonic() + 10
-        while not dbg._executing and time.monotonic() < deadline:
-            time.sleep(0.01)
-        time.sleep(0.2)
-
-        started = time.monotonic()
-        dbg.interrupt()
-        result = dbg.outbound.get(timeout=15)
-        collected["result"] = result
-        collected["elapsed"] = time.monotonic() - started
-        dbg.inbound.put({"cmd": "continue"})
-
-    thread = threading.Thread(target=driver)
-    thread.start()
-
-    # Runs the debuggee on *this* (main) thread, so `interrupt` takes the SIGINT
-    # route; blocks in the interaction loop until the driver says continue.
-    dbg.set_trace()
-    _ = 1
-
-    thread.join(timeout=20)
-    assert not thread.is_alive()
-
-    result = collected["result"]
-    assert result["type"] == "cell_result"
-    assert _has_error(result["outputs"], "KeyboardInterrupt")
-    # The whole point: we broke the sleep well before its 30s, not waited it out.
-    assert collected["elapsed"] < 10
-
-
 def _read_pty_for_url(master: int, sink: list[str], timeout: float = 30) -> str:
     """Drain the pty master on a thread and return judb's UI URL.
 
