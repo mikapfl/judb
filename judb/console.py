@@ -304,7 +304,20 @@ class Console:
         formatter = self.shell.display_formatter
         if formatter is None:  # pragma: no cover - always set on a live shell
             return {"text/plain": self._short_repr(obj)}
-        data, _md = formatter.format(obj)
+        # Inspect passively. Some objects (e.g. plotly figures) render via
+        # `_ipython_display_`, which would hijack `format()` — returning no mime
+        # bundle and instead *displaying* themselves (a side effect that lands
+        # nowhere during inspection, since `_capture` is None). Disabling that
+        # formatter makes `format()` fall through to the object's
+        # `_repr_mimebundle_`/`_repr_*_`, yielding the same rich bundle the
+        # console shows so the Variables tree can render it too.
+        ipython_display = formatter.ipython_display_formatter
+        was_enabled = ipython_display.enabled
+        ipython_display.enabled = False
+        try:
+            data, _md = formatter.format(obj)
+        finally:
+            ipython_display.enabled = was_enabled
         data = dict(data)
         data.setdefault("text/plain", self._short_repr(obj))
         return data

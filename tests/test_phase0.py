@@ -7,6 +7,7 @@ embedded rich-capture console and the queue-driven bdb debugger.
 
 import base64
 import threading
+from types import FrameType
 from typing import Any
 
 import numpy as np
@@ -77,6 +78,33 @@ def test_exception_becomes_error_output():
     assert not result.success
     errors = [o for o in result.outputs if o.kind == "error"]
     assert errors and errors[0].data["ename"] == "ZeroDivisionError"
+
+
+def test_inspect_gets_rich_bundle_for_ipython_display_objects():
+    """Values that render via `_ipython_display_` (e.g. plotly figures) must
+    still yield their rich mime bundle when inspected in the Variables tree.
+    `_ipython_display_` would otherwise hijack `format()`, returning no bundle
+    (and self-displaying into nowhere) — so the tree would show only text."""
+
+    class Displayable:
+        def _ipython_display_(self) -> None:
+            from IPython.display import display
+
+            display({"text/html": "<b>rich</b>"}, raw=True)
+
+        def _repr_html_(self) -> str:
+            return "<b>rich</b>"
+
+    def frame_with_local() -> FrameType:
+        widget = Displayable()  # noqa: F841 — inspected via the frame
+        import sys
+
+        frame = sys._getframe()
+        assert frame is not None
+        return frame
+
+    result = Console().inspect(frame_with_local(), [["name", "widget"]])
+    assert result["repr"].get("text/html") == "<b>rich</b>"
 
 
 # --- debugger + console composition ---------------------------------------
