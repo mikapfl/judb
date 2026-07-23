@@ -133,6 +133,14 @@ class Debugger(bdb.Bdb):
                 mpl_backend.dispatch(fig_id, content)
             return False
 
+        if cmd == "mpl_download":
+            # Render a figure via savefig (png/svg/pdf/…) on this thread — the
+            # WebAgg canvas is raster, so vector formats can only come from here.
+            fig_id, fmt = msg.get("id"), msg.get("format")
+            if isinstance(fig_id, str) and isinstance(fmt, str):
+                mpl_backend.download(fig_id, fmt)
+            return False
+
         if cmd == "expand":
             self._expand(msg.get("path"))
             return False

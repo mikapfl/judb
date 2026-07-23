@@ -13,6 +13,32 @@
   let host: HTMLDivElement;
   let error = $state("");
 
+  const DOWNLOAD_MIME: Record<string, string> = {
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    svg: "image/svg+xml",
+    pdf: "application/pdf",
+    eps: "application/postscript",
+    ps: "application/postscript",
+    webp: "image/webp",
+    tif: "image/tiff",
+    tiff: "image/tiff",
+  };
+
+  // Save a backend-rendered figure (base64) to a file via a Blob URL — handles
+  // large SVG/PDF output better than a data: URI, and the type sets the MIME.
+  function saveFile(format: string, base64: string): void {
+    const bytes = Uint8Array.from(atob(base64), (ch) => ch.charCodeAt(0));
+    const blob = new Blob([bytes], { type: DOWNLOAD_MIME[format] ?? "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `figure-${id}.${format}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   $effect(() => {
     let disposed = false;
     let unregister: (() => void) | undefined;
@@ -33,19 +59,22 @@
           close: () => {},
         };
 
+        // Download in the toolbar's selected format. The canvas is raster (PNG
+        // only), so we ask the backend to render the figure with savefig — for
+        // png *and* vector formats (svg/pdf/…) — and save the bytes it returns.
         const ondownload = (f: MplFigure) => {
-          const a = document.createElement("a");
-          a.href = f.canvas.toDataURL();
-          a.download = `figure-${id}.png`;
-          a.click();
+          conn.sendMplDownload(id, f.format_dropdown?.value || "png");
         };
 
         new mpl.figure(id, socket, ondownload, host);
 
         // Frames/control messages from the backend → the figure's onmessage.
         // A base64 PNG is delivered as a data: URI string (mpl.js accepts that
-        // directly); JSON control messages as their serialised text.
+        // directly); JSON control messages as their serialised text. A `download`
+        // reply (savefig output) is saved to a file; not an mpl.js message.
         unregister = conn.registerMpl(id, (msg: MplMsg) => {
+          if (msg.download) return saveFile(msg.download.format, msg.download.data);
+          if (msg.download_error) return void (error = msg.download_error);
           if (msg.blob !== undefined)
             socket!.onmessage({ data: `data:image/png;base64,${msg.blob}` });
           else socket!.onmessage({ data: JSON.stringify(msg.json) });

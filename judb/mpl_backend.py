@@ -25,6 +25,7 @@ Two channels carry the traffic:
 from __future__ import annotations
 
 import base64
+import io
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -155,6 +156,31 @@ def dispatch(fig_id: str, content: dict[str, Any]) -> None:
         _managers.pop(fig_id, None)
         return
     manager.handle_json(content)
+
+
+def download(fig_id: str, fmt: str) -> None:
+    """Render a figure with ``savefig`` in the requested format (png/svg/pdf/…)
+    and stream it to the browser. Runs on the debuggee thread (via the
+    interaction loop) since it touches the figure; the WebAgg canvas is raster,
+    so vector formats *must* come from ``savefig``, not the client canvas."""
+    manager = _managers.get(fig_id)
+    if manager is None:
+        return
+    buf = io.BytesIO()
+    try:
+        manager.canvas.figure.savefig(buf, format=fmt)
+    except Exception as exc:  # noqa: BLE001 — surface any savefig failure to the browser
+        _send(fig_id, {"download_error": f"{type(exc).__name__}: {exc}"})
+        return
+    _send(
+        fig_id,
+        {
+            "download": {
+                "format": fmt,
+                "data": base64.b64encode(buf.getvalue()).decode("ascii"),
+            }
+        },
+    )
 
 
 def reset() -> None:

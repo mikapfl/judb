@@ -118,6 +118,11 @@ export interface MplMsg {
   id: string;
   json?: unknown;
   blob?: string;
+  /** A figure rendered by the backend for saving (base64), in reply to a
+   *  `mpl_download` command — png/svg/pdf/… (the WebAgg canvas is raster, so
+   *  vector formats must come from the server). */
+  download?: { format: string; data: string };
+  download_error?: string;
 }
 
 /** Cell-output mime carrying `{ id }` — mounts an interactive WebAgg canvas. */
@@ -150,4 +155,5 @@ export type Command =
   | { cmd: "set_break"; filename: string; line: number }
   | { cmd: "clear_break"; filename: string; line: number }
   | { cmd: "mpl_event"; id: string; content: unknown }
+  | { cmd: "mpl_download"; id: string; format: string }
   | { cmd: "interrupt" };

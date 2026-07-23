@@ -207,6 +207,10 @@ class Connection {
     this.send({ cmd: "mpl_event", id, content });
   }
 
+  sendMplDownload(id: string, format: string): void {
+    this.send({ cmd: "mpl_download", id, format });
+  }
+
   // --- lazy variable inspection ---------------------------------------
   //
   // A pane calls expand(path) to fetch a variable's repr + children; the result

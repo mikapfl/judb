@@ -9,6 +9,8 @@
 export interface MplFigure {
   canvas: HTMLCanvasElement;
   buttons: Record<string, HTMLButtonElement>;
+  /** The toolbar's format `<select>` (png/svg/pdf/…), read on download. */
+  format_dropdown: HTMLSelectElement;
   ws: MplSocket;
 }
 

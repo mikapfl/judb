@@ -66,6 +66,32 @@ def test_plot_becomes_a_webagg_mount_and_renders(interactive_backend: Sent) -> N
     assert frames, f"no rendered frame emitted; got {[m.get('json', m) for m in sent]}"
 
 
+def test_download_renders_requested_vector_format(interactive_backend: Sent) -> None:
+    """The toolbar's format selector saves via savefig, not the raster canvas —
+    so svg/pdf really come out as svg/pdf, not a renamed PNG."""
+    import base64
+
+    sent = interactive_backend
+    console = Console()
+    console.run_cell("%matplotlib judb")
+    result = console.run_cell(
+        "import matplotlib.pyplot as plt; plt.plot([1, 2, 3]); None"
+    )
+    fig_id = next(
+        o.data[mpl_backend.WEBAGG_MIME]["id"]
+        for o in result.outputs
+        if mpl_backend.WEBAGG_MIME in o.data
+    )
+
+    heads = {"svg": b"<?xml", "pdf": b"%PDF", "png": b"\x89PNG"}
+    for fmt, head in heads.items():
+        sent.clear()
+        mpl_backend.download(fig_id, fmt)
+        replies: list[dict[str, str]] = [m["download"] for m in sent if "download" in m]  # ty: ignore
+        assert len(replies) == 1 and replies[0]["format"] == fmt
+        assert base64.b64decode(replies[0]["data"]).startswith(head)
+
+
 def test_inline_still_produces_png_after_switching_back(
     interactive_backend: Sent,
 ) -> None:
