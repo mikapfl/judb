@@ -67,14 +67,20 @@ def _mpld3_hover() -> HTML:
     rng = np.random.default_rng(1)
     n = 40
     x, y = rng.normal(size=n), rng.normal(size=n)
-    fig, ax = plt.subplots(figsize=(6, 4))
+    fig, ax = plt.subplots(figsize=(6, 4), facecolor="white")
     ax.set_title("mpld3 scatter — hover a point for its label", size=12)
     scatter = ax.scatter(x, y, s=120 * rng.random(n) + 20, c=rng.random(n), alpha=0.6)
     labels = [f"point {i} ({xi:.2f}, {yi:.2f})" for i, (xi, yi) in enumerate(zip(x, y))]
     plugins.connect(fig, plugins.PointLabelTooltip(scatter, labels=labels))
     html = mpld3.fig_to_html(fig)
     plt.close(fig)
-    return HTML(html)
+    # mpld3 renders the figure background transparent, so in dark mode the title
+    # and tick labels (matplotlib black) would sit on the dark iframe. Wrap it in
+    # a white card — the same always-white treatment judb gives matplotlib PNGs.
+    return HTML(
+        f'<div style="background:white;display:inline-block;padding:6px 10px;'
+        f'border-radius:4px">{html}</div>'
+    )
 
 
 def build_scene(temps: np.ndarray) -> dict[str, float]:
