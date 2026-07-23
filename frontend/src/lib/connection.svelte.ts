@@ -40,6 +40,11 @@ export interface ExpandState {
   error?: string;
 }
 
+/** Reconnect backoff bounds: quick enough that a blip is invisible, capped so a
+ *  genuinely dead server is not hammered. */
+const RETRY_MIN_MS = 250;
+const RETRY_MAX_MS = 5000;
+
 class Connection {
   status = $state<Status>("connecting");
   filename = $state("");
@@ -62,6 +67,9 @@ class Connection {
   expanded = $state<Record<string, ExpandState>>({});
 
   #ws: WebSocket | null = null;
+  // Reconnect backoff state (see `#scheduleReconnect`).
+  #retryDelay = RETRY_MIN_MS;
+  #retryTimer: ReturnType<typeof setTimeout> | null = null;
   // FIFO of resolvers awaiting `completions` replies. Requests are serialized on
   // the debuggee thread, so replies come back in the order they were sent.
   #pendingCompletions: Array<(m: CompletionsMsg) => void> = [];
@@ -102,9 +110,31 @@ class Connection {
     const ws = new WebSocket(`ws://${location.host}/ws?token=${token}`);
     this.#ws = ws;
     ws.onmessage = (ev) => this.#onMessage(JSON.parse(ev.data) as ServerMsg);
-    ws.onclose = () => {
-      if (this.status !== "finished") this.status = "disconnected";
+    ws.onopen = () => {
+      // The server replays the current state to a reconnecting client, so the
+      // panes refill on their own; just reset the backoff.
+      this.#retryDelay = RETRY_MIN_MS;
     };
+    ws.onclose = () => {
+      // `finished` means the debuggee is gone for good — nothing to come back
+      // to. Anything else (laptop sleep, a network blip, a server hiccup) is
+      // worth retrying: the debuggee is very likely still sitting there paused.
+      if (this.status === "finished") return;
+      this.status = "disconnected";
+      this.#scheduleReconnect();
+    };
+  }
+
+  /** Reconnect with exponential backoff, capped. Keeps retrying: a paused
+   *  debuggee can outlive an arbitrarily long disconnect, and a retry against a
+   *  dead port fails instantly and cheaply on localhost. */
+  #scheduleReconnect(): void {
+    if (this.#retryTimer !== null) return; // one in flight is enough
+    this.#retryTimer = setTimeout(() => {
+      this.#retryTimer = null;
+      this.#retryDelay = Math.min(this.#retryDelay * 2, RETRY_MAX_MS);
+      this.connect();
+    }, this.#retryDelay);
   }
 
   send(cmd: Command): void {

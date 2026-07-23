@@ -10,7 +10,12 @@ and the terminal demo, so this server is a drop-in replacement for that driver:
     browser ◄─ws─── outbound.get()      ...paused state + rich cell results
 
 An unbounded pump moves ``outbound`` into an asyncio queue so messages emitted
-before the browser connects (the first ``paused``) are buffered, not lost.
+before the browser connects (the first ``paused``) are buffered, not lost. That
+buffer only covers messages nobody has read yet; a browser that *re*connects
+(refresh, restored tab, a dropped socket the client retried) has missed whatever
+the previous connection already consumed, so the most recent state message is
+also kept and replayed to it — otherwise the tab comes up blank on a debuggee
+that is still paused.
 
 Security: binds to ``127.0.0.1`` on a random port with a random URL token; every
 request must carry the token. It executes arbitrary code in the paused frame, so
@@ -33,6 +38,11 @@ if TYPE_CHECKING:
 
 _STATIC = Path(__file__).parent / "static"
 
+# Message types that define the debuggee's current state, as opposed to
+# one-shot results (cell output, completions, expansions). The most recent
+# one is replayed to a reconnecting browser so a refresh restores the UI.
+_STATE_TYPES = frozenset({"paused", "running", "finished"})
+
 
 class DebugServer:
     """Serves the static frontend and a command WebSocket for one debugger."""
@@ -46,6 +56,14 @@ class DebugServer:
         # Buffers outbound messages until (and between) websocket connections.
         self._out_q: asyncio.Queue[dict[str, Any]] | None = None
         self._ready = threading.Event()
+        # The last message that defines where the debuggee *is*, replayed to a
+        # reconnecting browser (see `_handle_ws`). Messages consumed by a
+        # previous connection are gone from `_out_q`, so without this a refresh
+        # mid-session leaves the tab blank while the debuggee sits paused.
+        self._last_state: dict[str, Any] | None = None
+        # Whether any browser has connected yet: the first one is brought up to
+        # date by the buffered queue, so replaying would only duplicate.
+        self._had_client = False
 
     @property
     def url(self) -> str:
@@ -99,6 +117,10 @@ class DebugServer:
         assert self._loop is not None and self._out_q is not None
         while True:
             msg = self.dbg.outbound.get()
+            if msg.get("type") in _STATE_TYPES:
+                # Remember it for a reconnecting browser. Rebinding a reference
+                # is atomic, so the event-loop thread reads it without a lock.
+                self._last_state = msg
             self._loop.call_soon_threadsafe(self._out_q.put_nowait, msg)
 
     # --- request handlers -------------------------------------------------
@@ -134,6 +156,15 @@ class DebugServer:
         self._check_token(request)
         ws = web.WebSocketResponse()
         await ws.prepare(request)
+        # A *re*connecting browser (refresh, restored tab, a drop the client
+        # retried) has missed everything the previous connection consumed, so
+        # bring it up to date with where the debuggee stands. The first client
+        # needs no replay: the buffered queue still holds those messages.
+        # Anything newer that queued while nobody listened follows immediately
+        # and supersedes this.
+        if self._had_client and self._last_state is not None:
+            await ws.send_json(self._last_state)
+        self._had_client = True
         sender = asyncio.create_task(self._send_loop(ws))
         try:
             async for msg in ws:

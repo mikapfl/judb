@@ -291,3 +291,34 @@ test("clicking an outer stack frame retargets the variables pane", async ({ page
     if (proc.exitCode === null) proc.kill("SIGKILL");
   }
 });
+
+test("refreshing the page while paused restores the UI", async ({ page }) => {
+  // The everyday case: the user hits F5 (or the tab is restored) while the
+  // debuggee sits paused. Everything the first connection consumed is gone from
+  // the server's outbound buffer, so without a state replay the reloaded tab
+  // would come up blank on a debuggee that is still very much paused.
+  const { proc, url } = await startDebuggee();
+
+  try {
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+    await expect(page.locator(".source")).toContainText("np.linspace");
+
+    await page.reload();
+
+    // Same paused frame, repopulated from the replay.
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+    await expect(page.locator(".source")).toContainText("np.linspace");
+    await expect(page.locator(".vars")).toContainText("data");
+    await expect(page.locator(".stack")).toContainText("compute");
+
+    // And it is still driveable: the console runs in the paused frame.
+    const cell = page.locator(".cell .cm-content").first();
+    await cell.click();
+    await page.keyboard.type("len(data)");
+    await page.getByRole("button", { name: "Run cell" }).first().click();
+    await expect(page.locator(".cells")).toContainText("50", { timeout: 15_000 });
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
