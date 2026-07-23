@@ -537,7 +537,6 @@ dependencies = [
     { name = "matplotlib-inline" },
     { name = "numpy" },
     { name = "pandas" },
-    { name = "pre-commit" },
 ]
 
 [package.optional-dependencies]
@@ -554,6 +553,7 @@ example = [
 [package.dev-dependencies]
 dev = [
     { name = "hatchling" },
+    { name = "pre-commit" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "ty" },
@@ -573,7 +573,6 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.0" },
     { name = "plotly", marker = "extra == 'example'", specifier = ">=5.20" },
     { name = "polars", marker = "extra == 'example'", specifier = ">=1.0" },
-    { name = "pre-commit", specifier = ">=4.6.1" },
     { name = "xarray", marker = "extra == 'example'", specifier = ">=2024.1" },
 ]
 provides-extras = ["example"]
@@ -581,6 +580,7 @@ provides-extras = ["example"]
 [package.metadata.requires-dev]
 dev = [
     { name = "hatchling" },
+    { name = "pre-commit", specifier = ">=4.6.1" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.15.22" },
     { name = "ty", specifier = ">=0.0.1a1" },

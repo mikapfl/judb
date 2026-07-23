@@ -14,7 +14,6 @@ dependencies = [
     "matplotlib-inline>=0.1.6",
     "numpy>=1.24",
     "pandas>=2.0",
-    "pre-commit>=4.6.1",
 ]
 
 [project.entry-points."matplotlib.backend"]
@@ -40,6 +39,9 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.15.22",
     "ty>=0.0.1a1",
+    # Git-hook runner. Dev-only: it gates commits (same checks as `make lint`)
+    # and must never land in a user's `pip install judb` environment.
+    "pre-commit>=4.6.1",
     # Build backend; also a dev dep so ty can resolve hatch_build.py's imports.
     "hatchling",
 ]
