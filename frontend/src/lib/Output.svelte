@@ -1,5 +1,6 @@
 <script lang="ts">
   import Anser from "anser";
+  import { marked } from "marked";
   import type { Output } from "../protocol";
   import { theme } from "./theme.svelte";
 
@@ -38,7 +39,9 @@
   // `<table border="1">` → 1990s beveled borders; bare links/code/headings). We
   // inject a compact analogue of Jupyter's output CSS: `.dataframe` styling plus
   // generic rules (tables, headings, lists, links, code/pre, blockquotes) so any
-  // repr looks like a notebook output. Heavy library reprs (Styler, xarray,
+  // repr looks like a notebook output. This styling is derived from Project
+  // Jupyter's notebook/nbconvert stylesheets (BSD-3-Clause; see NOTICE and
+  // licenses/jupyter-LICENSE.txt). Heavy library reprs (Styler, xarray,
   // sklearn, plotly) ship their own scoped CSS and override these low-specificity
   // rules untouched. The iframe can't read the app's CSS variables, so colours
   // are baked in per resolved theme; neutral greys (rgba 128) work in both. A
@@ -91,10 +94,23 @@
     if (window.ResizeObserver) new ResizeObserver(s).observe(document.body);
     else setTimeout(s, 50);
   <\/script>`;
-  const htmlDoc = $derived(
+  // Both text/html and text/markdown render in the sandboxed iframe: markdown is
+  // parsed to HTML (marked), then it reuses the same isolation (so any raw HTML /
+  // scripts a Markdown output carries can't touch this page — no separate
+  // sanitizer needed) and the same Jupyter output CSS (headings, lists, code,
+  // tables all styled). `marked.parse` is synchronous with the default options.
+  const iframeMime = $derived(
+    richMime === "text/html" || richMime === "text/markdown" ? richMime : undefined,
+  );
+  const iframeBody = $derived(
     richMime === "text/html"
-      ? `${htmlHead(theme.resolved)}<body>${String(d["text/html"])}${RESIZE_JS}`
-      : "",
+      ? String(d["text/html"])
+      : richMime === "text/markdown"
+        ? (marked.parse(String(d["text/markdown"])) as string)
+        : "",
+  );
+  const htmlDoc = $derived(
+    iframeMime ? `${htmlHead(theme.resolved)}<body>${iframeBody}${RESIZE_JS}` : "",
   );
 
   // Grow the frame to its reported content height (capped; taller content scrolls
@@ -125,9 +141,10 @@
   <img class="out" alt="output" src={`data:${richMime};base64,${d[richMime]}`} />
 {:else if richMime === "image/svg+xml"}
   <img class="out" alt="output" src={svgDataUri(String(d["image/svg+xml"]))} />
-{:else if richMime === "text/html"}
-  <!-- Sandboxed: script-bearing HTML (plotly/bokeh) can't touch this page.
-       srcdoc carries Jupyter's .dataframe CSS + a resize script (see htmlDoc). -->
+{:else if iframeMime}
+  <!-- Sandboxed: script-bearing HTML (plotly/bokeh) and Markdown-derived HTML
+       can't touch this page. srcdoc carries Jupyter output CSS + a resize
+       script (see htmlDoc). -->
   <iframe
     bind:this={frameEl}
     class="out"

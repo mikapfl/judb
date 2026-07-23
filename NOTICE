@@ -11,3 +11,10 @@ judb's debugger architecture and design borrow heavily from PuDB
 (https://github.com/inducer/pudb), which is licensed under the MIT/X Consortium
 license. A copy of PuDB's license and attribution notice is included in the
 licenses/ directory (see licenses/pudb-LICENSE.txt).
+
+judb's rich-output styling (the CSS injected into the console output iframe to
+make DataFrames and other HTML reprs look like a notebook) is derived from
+Project Jupyter's notebook / nbconvert output stylesheets
+(https://jupyter.org), which are licensed under the BSD 3-Clause license. A copy
+of Jupyter's license and attribution notice is included in the licenses/
+directory (see licenses/jupyter-LICENSE.txt).

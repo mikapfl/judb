@@ -21,6 +21,7 @@
     "@codemirror/view": "^6.35.0",
     "@lezer/highlight": "^1.2.3",
     "anser": "^2.3.0",
+    "marked": "^18.0.7",
     "svelte-splitpanes": "^8.0.9"
   },
   "devDependencies": {

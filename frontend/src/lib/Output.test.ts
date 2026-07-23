@@ -20,6 +20,28 @@ describe("Output renderer registry", () => {
     expect(iframe?.getAttribute("srcdoc")).toContain("<b>hi</b>");
   });
 
+  it("renders text/markdown as HTML in the sandboxed iframe", () => {
+    const { container } = out({
+      kind: "display_data",
+      data: { "text/markdown": "# Title\n\n- one\n- two" },
+    });
+    const srcdoc = container.querySelector("iframe")?.getAttribute("srcdoc") ?? "";
+    // marked turned the Markdown into HTML (heading + list), not raw source.
+    expect(srcdoc).toContain("<h1>Title</h1>");
+    expect(srcdoc).toContain("<li>one</li>");
+    expect(srcdoc).not.toContain("# Title");
+  });
+
+  it("prefers text/html over text/markdown when both are present", () => {
+    const { container } = out({
+      kind: "execute_result",
+      data: { "text/html": "<b>rich</b>", "text/markdown": "# md" },
+    });
+    const srcdoc = container.querySelector("iframe")?.getAttribute("srcdoc") ?? "";
+    expect(srcdoc).toContain("<b>rich</b>");
+    expect(srcdoc).not.toContain("<h1>md</h1>");
+  });
+
   it("injects Jupyter .dataframe CSS so pandas tables lose the UA borders", () => {
     // pandas emits <table border="1" class="dataframe">; without our CSS the
     // browser draws 1990s beveled cell borders. The srcdoc must ship the reset.
