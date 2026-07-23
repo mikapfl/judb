@@ -19,8 +19,6 @@ Scope (Phase 3 / Wave A scaffold, see PHASE3_PLAN.md A2):
     yet) — a follow-up for A3/B2.
 """
 
-from __future__ import annotations
-
 import io
 import sys
 from pathlib import Path

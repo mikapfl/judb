@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help dev test lint frontend frontend-install frontend-check frontend-test frontend-e2e
+.PHONY: help dev test lint license smoke frontend frontend-install frontend-check frontend-test frontend-e2e
 
 help:  ## Show this help
 	@echo "judb — available make targets:"
@@ -18,6 +18,12 @@ test:  ## Run all Python tests
 
 lint:  ## Run all linting and formatting
 	uv run pre-commit run --all-files
+
+license:  ## Check dependency license compliance (pylic)
+	uv run pylic check
+
+smoke:  ## Build wheel+sdist and verify a fresh install round-trips (packaging test)
+	./scripts/smoke_install.sh
 
 frontend-install:  ## Install frontend deps (pnpm via corepack)
 	cd frontend && pnpm install
