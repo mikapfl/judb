@@ -55,6 +55,26 @@ export const judbTheme = EditorView.theme({
     color: "var(--err-fg, #e06c75)",
     opacity: "0.4",
   },
+  // Tab-completion popup. Unthemed it inherits CodeMirror's light base theme
+  // (white background, near-white text) and every unselected row is unreadable
+  // in dark mode — so paint it from tokens like the rest of the chrome.
+  ".cm-tooltip.cm-tooltip-autocomplete": {
+    backgroundColor: "var(--bg-raised)",
+    border: "1px solid var(--border-strong)",
+    borderRadius: "4px",
+  },
+  ".cm-tooltip-autocomplete > ul": { fontFamily: "var(--font-mono)" },
+  ".cm-tooltip-autocomplete > ul > li": { color: "var(--fg)" },
+  ".cm-tooltip-autocomplete > ul > li[aria-selected]": {
+    backgroundColor: "var(--accent-bg)",
+    color: "var(--fg)",
+  },
+  ".cm-completionMatchedText": {
+    color: "var(--accent)",
+    textDecoration: "none",
+    fontWeight: "bold",
+  },
+  ".cm-completionDetail": { color: "var(--fg-dim)" },
 });
 
 /** Python syntax palette, coloured via CSS variables (tokens.css) so it recolours
