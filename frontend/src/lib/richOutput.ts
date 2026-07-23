@@ -41,7 +41,10 @@ const RESIZE = `<script>${RESIZE_BODY}<\/script>`;
  *  sandboxed iframe can't read the app's CSS variables). */
 export function outputHead(theme: Resolved): string {
   const c = PALETTE[theme];
-  return `<!doctype html><meta charset="utf-8"><style>
+  // `data-theme` on <html> lets library reprs that ship their own dark palette
+  // (e.g. xarray keys off `html[data-theme="dark"]`) flip with us — without it
+  // they render their light palette's dark text on our dark background.
+  return `<!doctype html><html data-theme="${theme}"><meta charset="utf-8"><style>
     :root { color-scheme: ${theme}; }
     html, body { margin: 0; }
     body { padding: 4px 2px; background: ${c.bg}; color: ${c.fg};
@@ -78,7 +81,7 @@ export function outputHead(theme: Resolved): string {
 
 /** Full srcdoc for an HTML body (raw `text/html` or Markdown-rendered HTML). */
 export function htmlDoc(bodyHtml: string, theme: Resolved): string {
-  return `${outputHead(theme)}<body>${bodyHtml}${RESIZE}`;
+  return `${outputHead(theme)}<body data-theme="${theme}">${bodyHtml}${RESIZE}`;
 }
 
 // --- interactive viz specs (CDN-loaded inside the sandboxed iframe) ----------

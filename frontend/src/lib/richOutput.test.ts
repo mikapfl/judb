@@ -56,4 +56,11 @@ describe("htmlDoc", () => {
     expect(doc).toContain("<p>hi</p>");
     expect(doc).toContain("judbHeight");
   });
+
+  it("stamps data-theme so library reprs with their own dark palette flip too", () => {
+    // xarray keys its dark palette off html[data-theme="dark"] / body[data-theme].
+    const doc = htmlDoc("<p>hi</p>", "dark");
+    expect(doc).toContain('<html data-theme="dark"');
+    expect(doc).toContain('<body data-theme="dark"');
+  });
 });
