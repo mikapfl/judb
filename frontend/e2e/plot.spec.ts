@@ -191,6 +191,15 @@ test("interactive matplotlib: render an in-frame plot, then zoom it", async ({ p
     const before = await canvas.evaluate((c: HTMLCanvasElement) => c.toDataURL());
     expect(before.length).toBeGreaterThan(8000);
 
+    // Regression guard: the rubberband canvas is stacked *over* the plot canvas,
+    // so it must stay transparent — an opaque background there hides the figure
+    // (it did, in Firefox, when the white backing wasn't scoped to .mpl-canvas).
+    const rubberbandBg = await page
+      .locator(".webagg-host canvas:not(.mpl-canvas)")
+      .first()
+      .evaluate((c: HTMLCanvasElement) => getComputedStyle(c).backgroundColor);
+    expect(rubberbandBg).toBe("rgba(0, 0, 0, 0)");
+
     // The WebAgg navigation toolbar is present (icons served from /_images; the
     // zoom tool's icon carries a "Zoom to rectangle" alt/tooltip).
     const zoom = page.locator(".webagg-host img[alt*='Zoom to rectangle']");

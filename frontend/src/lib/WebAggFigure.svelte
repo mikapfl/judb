@@ -84,8 +84,11 @@
     font-size: 12px;
     padding: 0.4rem;
   }
-  /* matplotlib builds the figure DOM itself, so these must be :global. */
-  .webagg-host :global(canvas) {
+  /* matplotlib builds the figure DOM itself, so these must be :global. Only the
+     main image canvas (`.mpl-canvas`) gets the white backing — NOT the
+     transparent rubberband canvas stacked on top of it, which would otherwise
+     hide the plot behind an opaque white layer (notably in Firefox). */
+  .webagg-host :global(canvas.mpl-canvas) {
     background: #ffffff; /* figures are always light, like our inline PNGs */
   }
   .webagg-host :global(.ui-dialog-titlebar) {
