@@ -42,6 +42,53 @@ describe("Output renderer registry", () => {
     expect(srcdoc).not.toContain("<h1>md</h1>");
   });
 
+  it("renders a Vega-Lite spec via the CDN viz iframe", () => {
+    const { container } = out({
+      kind: "execute_result",
+      data: {
+        "application/vnd.vegalite.v5+json": { mark: "point" },
+        "text/plain": "alt.Chart(...)",
+      },
+    });
+    const srcdoc = container.querySelector("iframe")?.getAttribute("srcdoc") ?? "";
+    expect(srcdoc).toContain("vega-embed@6");
+    expect(srcdoc).toContain('vegaEmbed("#vis", {"mark":"point"}');
+    // The text/plain repr those objects always ship must not win.
+    expect(container.querySelector("pre")).toBeFalsy();
+  });
+
+  it("renders a Plotly figure via the CDN viz iframe", () => {
+    const { container } = out({
+      kind: "execute_result",
+      data: { "application/vnd.plotly.v1+json": { data: [{ y: [1] }], layout: {} } },
+    });
+    const srcdoc = container.querySelector("iframe")?.getAttribute("srcdoc") ?? "";
+    expect(srcdoc).toContain("plotly.js-dist-min@2");
+    expect(srcdoc).toContain("Plotly.newPlot");
+  });
+
+  it("prefers self-contained text/html over the Plotly JSON mime", () => {
+    const { container } = out({
+      kind: "execute_result",
+      data: {
+        "text/html": "<div>self-contained plotly</div>",
+        "application/vnd.plotly.v1+json": { data: [], layout: {} },
+      },
+    });
+    const srcdoc = container.querySelector("iframe")?.getAttribute("srcdoc") ?? "";
+    expect(srcdoc).toContain("self-contained plotly");
+    expect(srcdoc).not.toContain("Plotly.newPlot");
+  });
+
+  it("prefers a static image over the Plotly JSON mime", () => {
+    const { container } = out({
+      kind: "execute_result",
+      data: { "image/png": "AAAA", "application/vnd.plotly.v1+json": { data: [], layout: {} } },
+    });
+    expect(container.querySelector("img")).toBeTruthy();
+    expect(container.querySelector("iframe")).toBeFalsy();
+  });
+
   it("injects Jupyter .dataframe CSS so pandas tables lose the UA borders", () => {
     // pandas emits <table border="1" class="dataframe">; without our CSS the
     // browser draws 1990s beveled cell borders. The srcdoc must ship the reset.
