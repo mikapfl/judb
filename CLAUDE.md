@@ -52,8 +52,9 @@ pre-commit is installed as a git hook, so commits are gated on the same checks a
 ### CI and releases (`.github/workflows/`)
 
 `ci.yml` runs on every pull request and every push to `main`, in four parallel
-jobs: **tests** (matrix py3.13 + py3.14 — no Node, the Python suite does not
-need the built bundle), **lint + licenses** (`pre-commit` + `pylic`, synced with
+jobs: **tests** (matrix py3.13 + py3.14 — no Node: `hatch_build.py` skips the
+frontend build for *editable* installs, and the Python suite does not need the
+bundle), **lint + licenses** (`pre-commit` + `pylic`, synced with
 `--all-extras` because ty must resolve `demo_rich.py`'s imports), **frontend**
 (svelte-check, Vitest, Playwright — needs Python too, since the e2e drives a
 real debuggee), and **package** (`scripts/smoke_install.sh`: build wheel+sdist,
@@ -73,8 +74,8 @@ hatchling and towncrier both read it, so a release bumps exactly one line.
 takes a `target` input (`testpypi` | `pypi`), rebuilds and re-verifies the
 artifacts, then publishes via PyPI **Trusted Publishing** (OIDC, no stored
 token). Each target maps to a GitHub *environment* of the same name, so `pypi`
-can require a reviewer. Both must be configured once on the index side before
-the first upload will be accepted.
+can require a reviewer. The one-time setup (GitHub environments + trusted
+publishers) and the release procedure itself are in **`RELEASING.md`**.
 
 ### Tests (`tests/`, organised by topic)
 

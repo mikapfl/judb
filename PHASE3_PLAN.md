@@ -136,7 +136,9 @@ Things that don't show up in the demo scripts but bite real users.
   takes a `testpypi`/`pypi` target, and rebuilds + re-verifies (tests and the
   install smoke) before publishing via Trusted Publishing. **Still manual, one
   time:** register the trusted publisher on both indexes and create the matching
-  `testpypi` / `pypi` GitHub environments, then run the Test-PyPI dry run.
+  `testpypi` / `pypi` GitHub environments, then run the Test-PyPI dry run — all
+  written up step by step in `RELEASING.md`. (Name `judb` verified free on both
+  indexes.)
 
 **Wave A exit:** a stranger runs `pip install judb`, then either
 `python -m judb their_script.py` or `pytest --pdbcls=judb:Debugger` (or adds

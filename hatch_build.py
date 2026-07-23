@@ -43,6 +43,20 @@ class FrontendBuildHook(BuildHookInterface[Any]):
 
         pnpm = shutil.which("pnpm")
         if pnpm is None:
+            if version == "editable":
+                # An *editable* install (`uv sync`, `pip install -e .`) does not
+                # ship the bundle, so Node is not actually required to get one.
+                # Refusing here would force Node onto every environment that
+                # merely wants to import judb or run the Python tests — including
+                # CI jobs that deliberately carry no Node. Warn and carry on; the
+                # server prints a "run `make frontend`" error if the bundle is
+                # genuinely missing when a browser asks for it.
+                self.app.display_warning(
+                    "judb: pnpm not found — skipping the frontend build for this "
+                    "editable install. Run `make frontend` before serving the UI."
+                )
+                return
+            # A real wheel/sdist must never ship without a bundle.
             msg = (
                 "pnpm is required to build the judb frontend bundle but was not "
                 "found on PATH. Run `corepack enable`, then `make frontend` "

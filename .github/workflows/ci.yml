@@ -27,8 +27,11 @@ jobs:
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
-      # No Node here on purpose: the Python suite does not need the built
-      # frontend bundle, so this job stays fast.
+      # No Node here on purpose. `uv sync` installs judb editable, which runs
+      # the hatch build hook — that hook skips the frontend build for editable
+      # installs when pnpm is absent, and the Python suite does not need the
+      # bundle. A real wheel/sdist still refuses to build without pnpm; the
+      # `package` job covers that path.
       - run: uv sync --python ${{ matrix.python }}
       - run: uv run --python ${{ matrix.python }} pytest -q
 
