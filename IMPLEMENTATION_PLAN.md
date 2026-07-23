@@ -194,8 +194,11 @@ interop had outweighed that.
 - **Phasing:** the Phase-1 vertical slice can use a ~100-line custom renderer
   (`text/plain` with ANSI→HTML, `text/html`, `image/png`, `svg`, `markdown`,
   `json`; script-bearing plotly/bokeh HTML in a sandboxed `srcdoc` iframe) to
-  avoid dragging in the Jupyter build early. Adopt embedded `rendermime` in
-  Phase 2 for real fidelity. Backend is unchanged either way (same mime bundles).
+  avoid dragging in the Jupyter build early. ~~Adopt embedded `rendermime` in
+  Phase 2 for real fidelity.~~ *(Superseded — `rendermime` was spiked and declined
+  in Phase 2a; the lean renderer stayed and the real gaps were filled with small
+  targeted libraries. See §5, Phase 2a.)* Backend is unchanged either way (same
+  mime bundles).
 - **What would change this:** if `%matplotlib widget` / `ipywidgets` becomes a
   must-have (open decision #3), that tugs toward more Jupyter reuse — possibly all
   the way to full Lumino, since their widget frontend is painful to reimplement.
@@ -266,7 +269,7 @@ judb/
                   #   since both reuse the shell's display formatter / completer
   server.py       # async static + websocket server; thread bridge to debugger
   protocol.py     # message dataclasses / (de)serialization
-  frontend/       # Vite/Svelte source (embeds @jupyterlab/rendermime for output)
+  frontend/       # Vite/Svelte source (lean mime→renderer registry + iframe output)
   static/         # built bundle shipped in the wheel
 ```
 
@@ -314,9 +317,55 @@ is the first genuinely useful release.**
   pure-Python execution). Each is covered by a Python websocket test and a
   Playwright browser test.
 
-**Phase 2a – polish for MVP with bling.**
-layout, design, small usability fixes, rendermime
-also add tests for real plot interactivity
+**Phase 2a — Polish & rich-output fidelity. ✅ Largely done.** Make outputs look
+like a notebook and the app look finished. All frontend-only — backend and
+protocol are unchanged (same mime bundles), which is exactly what the mime-bundle
+contract (§3) was meant to buy us.
+
+- **`rendermime` — investigated, declined.** Spiked `@jupyterlab/rendermime`
+  end-to-end: it *does* build into the single-file bundle, but it's a poor trade.
+  Bundle 474 KB → 1.16 MB (2.4×); it drags in the JupyterLab **app** framework
+  (`@jupyterlab/services`, `apputils` + React, `settingregistry`, the full
+  `@lumino/widgets` tree), ships an `eval` (`coreutils`) and json5 interop
+  warnings, and — worst — *regresses* the browser payoff: its untrusted HTML
+  renderer strips `<script>`, so plotly/bokeh render static (or run unsandboxed
+  if marked trusted). **Decision: keep the lean `mime→renderer` registry and fill
+  the real gaps with small, targeted libraries** (below). Revisit only if
+  `ipywidgets` becomes a must-have (which per §3 tugs toward full Lumino anyway).
+  *This supersedes the "adopt embedded `rendermime` in Phase 2" wording in §3.*
+- **Notebook-fidelity HTML output.** The sandboxed output iframe shipped no
+  stylesheet, so pandas' `<table border="1" class="dataframe">` fell through to
+  1990s UA table borders. It now injects a compact analogue of Jupyter's output
+  CSS — `.dataframe` styling plus generic rules (tables, headings, lists, links,
+  code/pre, blockquotes) — so DataFrames and any `_repr_html_` look like a
+  notebook cell. Heavy library reprs (pandas `Styler`, xarray, sklearn, plotly)
+  ship their own scoped CSS and override these low-specificity rules untouched. A
+  `postMessage` resize script fits the frame to its content (was a fixed 24 rem
+  gap). The CSS is derived from Jupyter's notebook/nbconvert stylesheets —
+  attributed BSD-3-Clause in `NOTICE` + `licenses/jupyter-LICENSE.txt`.
+- **Markdown output.** `text/markdown` (previously shown as raw source) is parsed
+  with `marked` and rendered through the same sandboxed iframe, reusing its
+  isolation (no separate sanitizer) and the Jupyter output CSS.
+- **Interactive viz specs.** Vega, Vega-Lite and Plotly JSON mimes
+  (`application/vnd.vega*+json`, `application/vnd.plotly.v1+json`) render by
+  loading the library from a **CDN inside the sandboxed iframe**
+  (`frontend/src/lib/richOutput.ts`) — lazy (only when such an output appears) and
+  isolated, so the single-file bundle stays small (**+1.6 KB**, no bundled viz
+  libs; plotly.js alone is ~3.5 MB). A fallback *below* image/`text/html`, since
+  altair/plotly usually also emit a self-contained `text/html` we prefer (it's
+  offline-capable). Trade-off: the JSON-mime path needs network the first time.
+  Verified end-to-end (raw vnd outputs → themed charts, light + dark).
+- **Light/dark theming.** A full theme system driven by `tokens.css` custom
+  properties (dark base + a `:root[data-theme="light"]` override): auto-detect via
+  `prefers-color-scheme`, plus a persisted toolbar toggle cycling auto → light →
+  dark, applied before mount (no flash). CodeMirror recolours via a CSS-variable
+  `HighlightStyle` + explicit selection/caret colours (no editor rebuild); the
+  output iframe bakes in per-theme colours. `frontend/src/lib/theme.svelte.ts`.
+- **Tests:** `richOutput` + `theme` unit suites and output-precedence / markdown /
+  DataFrame-CSS cases (Vitest); Playwright e2e still green (6/6).
+- **Still open in 2a:** broader layout/design polish and small usability passes;
+  and a committed test for *real* plot interactivity — currently covered only by a
+  CDN-render probe, not a checked-in e2e (the viz libraries aren't judb deps).
 
 **Phase 3 — Fit & finish.** Conditional breakpoints, watch expressions, source
 across multiple files, save/load console cells (notebook export), settings,
@@ -341,7 +390,7 @@ multi-thread/async debugging; *optional* native **JupyterLab-extension frontend*
 | Rich capture from a paused frame is hard | ~~High~~ **Retired** | Proven recipe (§1). |
 | Debugger + console don't compose | ~~High~~ **Retired** | Proven in one thread (§1). |
 | `settrace` tracing too slow on big loops | Med | Ship bdb; `sys.monitoring` backend in Phase 4. |
-| Script-bearing HTML (plotly/bokeh) rendering | Med | Sandboxed iframe in Phase 1; embedded `rendermime` from Phase 2 (§3). |
+| Script-bearing HTML (plotly/bokeh) rendering | Med | Sandboxed `srcdoc` iframe (Phase 1) — **kept**; Phase 2a added Jupyter output CSS, Markdown, and CDN-loaded Vega/Plotly JSON in the same iframe. (`rendermime` was declined — it strips scripts; see Phase 2a.) |
 | Writing to frame locals from console | Low | Match pdb: reads see locals, new names live in a scratch ns (documented). |
 | Threading/interrupt of a runaway console cell | Med | Interrupt via `KeyboardInterrupt` into the debuggee thread. |
 | Arbitrary code execution over the network | Med | Localhost-only + random URL token, no external bind. |
