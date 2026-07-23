@@ -74,6 +74,7 @@ class Debugger(bdb.Bdb):
     def interaction(self, frame: FrameType) -> None:
         self.current_frame = frame
         self._debuggee_tid = threading.get_ident()
+        self._reassert_sigint_handler()
         # Freeze the stopped stack; selection starts at the innermost frame.
         self._frames = self._frames_of(frame)
         self._selected = len(self._frames) - 1
@@ -182,6 +183,30 @@ class Debugger(bdb.Bdb):
             ctypes.pythonapi.PyThreadState_SetAsyncExc(
                 ctypes.c_long(tid), ctypes.py_object(KeyboardInterrupt)
             )
+
+    @staticmethod
+    def _reassert_sigint_handler() -> None:
+        """Re-install Python's SIGINT handler at the OS level whenever we pause.
+
+        Some C/Rust extensions install their *own* SIGINT handler when imported
+        (``polars`` is one), stealing it from Python at the OS level. ``signal.
+        getsignal`` still reports Python's handler — Python doesn't know it was
+        overwritten — but the OS no longer routes Ctrl+C through Python, so two
+        things silently break while paused: a real terminal Ctrl+C no longer
+        wakes the ``inbound.get()`` blocking this thread (the only way to end the
+        program without the judb window), and our own ``interrupt`` (which does
+        ``pthread_kill(SIGINT)`` for a main-thread debuggee) is swallowed too.
+
+        Re-asserting the handler Python believes is current pushes Python's
+        trampoline back down to the OS without clobbering a user's custom handler.
+        Only the main thread may set signal handlers, and SIGINT-based interrupts
+        only apply there, so this is a no-op for a worker-thread debuggee.
+        """
+        if threading.current_thread() is not threading.main_thread():
+            return
+        handler = signal.getsignal(signal.SIGINT)
+        if handler is not None:
+            signal.signal(signal.SIGINT, handler)
 
     # --- outbound messages ------------------------------------------------
 

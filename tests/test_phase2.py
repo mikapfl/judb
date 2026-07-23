@@ -12,6 +12,7 @@ import time
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+import pytest
 from aiohttp import ClientSession, ClientWebSocketResponse
 
 from judb import Debugger
@@ -473,3 +474,47 @@ def test_bad_frame_index_errors():
     asyncio.run(flow())
     thread.join(timeout=5)
     assert not thread.is_alive()
+
+
+def test_reassert_sigint_handler_reinstalls_current_handler(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """On pause, judb pushes Python's SIGINT handler back down to the OS so a
+    library that stole it at import (e.g. polars) can't kill terminal Ctrl+C or
+    our own `interrupt`. Here: it re-installs whatever handler Python reports."""
+    import signal
+
+    current = signal.getsignal(signal.SIGINT)
+    calls: list[tuple[int, Any]] = []
+    monkeypatch.setattr(
+        signal, "signal", lambda sig, handler: calls.append((sig, handler))
+    )
+
+    Debugger._reassert_sigint_handler()
+
+    assert calls == [(signal.SIGINT, current)]
+
+
+def test_reassert_sigint_handler_is_noop_off_main_thread(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Only the main thread may set signal handlers; for a worker-thread debuggee
+    it must be a silent no-op, not a ValueError."""
+    import signal
+
+    calls: list[Any] = []
+    errors: list[BaseException] = []
+    monkeypatch.setattr(signal, "signal", lambda *a: calls.append(a))
+
+    def run() -> None:
+        try:
+            Debugger._reassert_sigint_handler()
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    worker.join(timeout=5)
+
+    assert calls == []
+    assert errors == []
