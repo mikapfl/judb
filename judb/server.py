@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import secrets
 import threading
 from pathlib import Path
@@ -52,6 +53,10 @@ class DebugServer:
         self.host = host
         self.token = secrets.token_urlsafe(16)
         self.port: int | None = None
+        # The process this server's threads actually run in. `fork()` copies the
+        # object but not the threads, so a forked child holding an inherited
+        # DebugServer has no server at all — see `Debugger.start_server`.
+        self.pid = os.getpid()
         self._loop: asyncio.AbstractEventLoop | None = None
         # Buffers outbound messages until (and between) websocket connections.
         self._out_q: asyncio.Queue[dict[str, Any]] | None = None

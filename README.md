@@ -107,6 +107,41 @@ Under the hood this is matplotlib's own WebAgg engine (the same one behind
 required**. Interactivity is live whenever the debuggee is paused and freezes on
 Continue, since the figure lives in the paused frame.
 
+## Threads and processes
+
+judb debugs **one paused frame at a time**. Where that frame lives changes what
+works:
+
+| Where `set_trace()` runs | Status |
+|---|---|
+| The main thread (a normal script, `python -m judb`, pytest) | Fully supported |
+| A single worker thread | Supported, with two caveats below |
+| Two threads pausing at the same time | **Not supported** — see below |
+| A child process (`multiprocessing`, `fork`, `spawn`) | Supported — each process gets its own UI |
+
+**A single worker thread** pauses, shows its frame, and runs console cells in it
+exactly as the main thread does. Two things degrade, both because only the main
+thread can receive signals:
+
+- **Interrupt** falls back from a real `SIGINT` to Python's async-exception API,
+  which lands at the next bytecode. It still stops a Python loop, but it cannot
+  break out of a blocking call like `time.sleep` until that call returns.
+- **Ctrl+C in the terminal will not end the program.** The `KeyboardInterrupt`
+  is delivered to the main thread, while the paused worker keeps waiting; if it
+  is a non-daemon thread the process will not exit. Use the UI's Quit, or kill
+  the process.
+
+**Two threads pausing concurrently** is not supported yet (real multi-thread
+debugging is planned for a later phase). It does not crash, but: only the most
+recent pause is visible, the other paused thread is invisible while still
+blocked, and each Continue releases an arbitrary one of them. If your debuggee
+is multi-threaded, set a breakpoint that only one thread can reach.
+
+**Child processes** each start their own server on their own port and print
+their own URL, so you get one browser tab per paused process. This holds for
+`fork` too: a forked child does not reuse its parent's server, since the threads
+running it do not survive the fork.
+
 ## License
 
 Copyright 2026 Mika Pflüger. Licensed under the [Apache License 2.0](LICENSE)

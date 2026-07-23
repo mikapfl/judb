@@ -98,11 +98,20 @@ Things that don't show up in the demo scripts but bite real users.
   `17532b0`) and that Ctrl+C in the terminal while paused still ends the program
   (the SIGINT re-assert dance in `debugger.py` handles the polars case — add a
   regression note/test).
-- **Worker-thread & multiprocess debuggees — scope the promise.** `set_trace` from
-  a non-main thread already downgrades interrupt to `SetAsyncExc` and skips the
-  SIGINT re-assert. Document what works vs. not (Phase 4 owns real multi-thread/
-  async). Decide behavior when two threads hit `set_trace` concurrently: **[OPEN]**
-  serialize (one owns the UI at a time) or explicitly declare it unsupported for now.
+- **Worker-thread & multiprocess debuggees — scope the promise. ✅ Done.**
+  Behaviour established by experiment and written up in the README's *Threads and
+  processes* section. Verified: a single worker thread pauses and runs cells
+  normally, but interrupt degrades to `SetAsyncExc` (cannot break a blocking
+  call) and a terminal Ctrl+C does **not** end the program (the
+  `KeyboardInterrupt` goes to the main thread while the worker keeps waiting).
+  Two threads pausing concurrently does not crash but shows only the latest
+  pause and releases an arbitrary one per Continue — **[RESOLVED]** declared
+  unsupported for now rather than serialized; real multi-thread debugging is
+  Phase 4. Child processes each get their own server/tab.
+  *Fixed along the way:* a `fork()`ed child inherited the parent's `DebugServer`
+  object without the threads running it, so `start_server` short-circuited and
+  the child paused with no UI and no URL — a silent hang. `start_server` now
+  reuses a server only when its recorded pid matches.
 - **Port/token & reconnect.** Confirm a browser refresh reconnects cleanly
   (outbound buffering in `server.py` covers pre-connect; verify mid-session
   reconnect doesn't drop the current `paused` state — may need the server to

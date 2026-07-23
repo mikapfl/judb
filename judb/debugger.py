@@ -493,8 +493,13 @@ class Debugger(bdb.Bdb):
         tab regardless of ``open_browser`` (handy for headless boxes, CI, and
         driving pytest's ``--pdb`` entry point from a test).
         """
-        if self._server is not None:
+        if self._server is not None and self._server.pid == os.getpid():
             return self._server.url
+        # Either no server yet, or we are a *forked child* that inherited the
+        # parent's DebugServer object without its threads — the event loop and
+        # outbound pump did not survive the fork, so that object serves nobody.
+        # Reusing it would pause this process with no UI and no printed URL (a
+        # silent hang). Build a fresh server on its own port instead.
 
         from .server import DebugServer
 
