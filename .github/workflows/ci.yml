@@ -33,10 +33,13 @@ jobs:
       - run: uv run --python ${{ matrix.python }} pytest -q
 
   lint:
-    name: lint + licenses
+    name: lint + licenses + changelog
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # towncrier diffs against the base branch, so it needs real history.
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
@@ -52,6 +55,11 @@ jobs:
       - run: uv sync --all-extras
       - run: uv run pre-commit run --all-files --show-diff-on-failure
       - run: uv run pylic check
+      # Every PR should say what it changes for users. Nothing to say? Add an
+      # empty `<pr>.misc.md`. Only meaningful on a PR, where there is a base to
+      # diff against.
+      - if: github.event_name == 'pull_request'
+        run: uv run towncrier check --compare-with origin/${{ github.base_ref }}
 
   frontend:
     name: frontend (check, unit, e2e)

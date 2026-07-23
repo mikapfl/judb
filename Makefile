@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help dev test lint license smoke frontend frontend-install frontend-check frontend-test frontend-e2e
+.PHONY: help dev test lint license changelog changelog-draft smoke frontend frontend-install frontend-check frontend-test frontend-e2e
 
 help:  ## Show this help
 	@echo "judb — available make targets:"
@@ -21,6 +21,12 @@ lint:  ## Run all linting and formatting
 
 license:  ## Check dependency license compliance (pylic)
 	uv run pylic check
+
+changelog-draft:  ## Preview the release notes (keeps the fragments)
+	uv run towncrier build --draft
+
+changelog:  ## Build CHANGELOG.md from changelog.d/ and remove the fragments
+	uv run towncrier build --yes
 
 smoke:  ## Build wheel+sdist and verify a fresh install round-trips (packaging test)
 	./scripts/smoke_install.sh

@@ -6,6 +6,8 @@ As of Phase 1, :func:`set_trace` also starts a localhost websocket server and
 opens a browser tab, so ``breakpoint()`` drops you into the browser UI.
 """
 
+__version__ = "0.1.0"
+
 from .console import Console
 from .debugger import Debugger
 from .protocol import CellResult, Output
@@ -31,4 +33,4 @@ def set_trace(*, open_browser: bool = True) -> Debugger:
     return _active_debugger
 
 
-__all__ = ["CellResult", "Console", "Debugger", "Output", "set_trace"]
+__all__ = ["CellResult", "Console", "Debugger", "Output", "__version__", "set_trace"]

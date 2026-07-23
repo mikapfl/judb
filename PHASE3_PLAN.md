@@ -124,8 +124,12 @@ Things that don't show up in the demo scripts but bite real users.
 - **README quickstart is already good** — add: an animated demo GIF (the headline
   "plot a paused DataFrame" loop), a one-line pytest example, and a short "how it
   works / why not just pdb" paragraph pointing at `REQUIREMENT_ANALYSIS.md`.
-- **CHANGELOG + version.** Bump to a real `0.1.0` release; decide public
-  versioning story.
+- **CHANGELOG + version. ✅ Done.** Changelog managed with **towncrier**:
+  fragments in `changelog.d/`, collated by `make changelog` at release time, so
+  branches in flight never conflict over `CHANGELOG.md`; CI runs
+  `towncrier check` on PRs. Version single-sourced as `__version__` in
+  `judb/__init__.py` (hatchling `dynamic`, towncrier reads it too), so a release
+  bumps one line. `0.1.0` fragments for the Wave-A work are already written.
 - **[DECISION] Publish to PyPI as `0.1.0`.** Test-PyPI dry run first, then real.
   This is the concrete "show the world" deliverable and the natural Wave A exit.
   *Pipeline done:* `.github/workflows/release.yml` is `workflow_dispatch`-only,
