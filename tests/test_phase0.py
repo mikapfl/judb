@@ -11,6 +11,7 @@ from types import FrameType
 from typing import Any
 
 import numpy as np
+import pytest
 
 from judb import Console, Debugger
 
@@ -71,6 +72,38 @@ def test_plot_is_a_png_bundle():
     raw = base64.b64decode(png)
     assert raw[:8] == b"\x89PNG\r\n\x1a\n"  # PNG magic number
     print(f"\n[console] captured PNG bundle: {len(raw)} bytes")
+
+
+def test_matplotlib_inline_magic_works_and_plots_once():
+    """`%matplotlib inline` routes through `enable_gui`, which the base shell
+    leaves unimplemented; our inline shell makes it a no-op. A plot afterwards
+    must still yield exactly one PNG (the inline post-execute hook and our own
+    flush must not double up)."""
+    console = Console()
+    magic = console.run_cell("%matplotlib inline")
+    assert magic.success
+    assert not [o for o in magic.outputs if o.kind == "error"]
+
+    result = console.run_cell(
+        "import matplotlib.pyplot as plt; plt.plot([1, 2, 3]); None"
+    )
+    pngs = [
+        o
+        for o in result.outputs
+        if o.kind in ("display_data", "execute_result") and "image/png" in o.data
+    ]
+    assert len(pngs) == 1
+
+
+def test_enable_gui_is_noop_for_inline_and_errors_for_real_backends():
+    """The inline shell's `enable_gui` (what `%matplotlib inline` calls) is a
+    no-op for the inline / no-GUI cases and refuses a real GUI backend with a
+    clear message — there's no event loop in the paused console to drive one."""
+    shell = Console().shell
+    assert shell.enable_gui(None) is None
+    assert shell.enable_gui("inline") is None
+    with pytest.raises(NotImplementedError, match="inline"):
+        shell.enable_gui("qt")
 
 
 def test_exception_becomes_error_output():

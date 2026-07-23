@@ -92,6 +92,25 @@ class _CapturingDisplayPublisher(DisplayPublisher):
         pass
 
 
+class _InlineShell(InteractiveShell):
+    """An embedded shell whose only "GUI" is the inline backend.
+
+    The base ``InteractiveShell.enable_gui`` is an abstract stub that raises
+    ``NotImplementedError`` — real front-ends (terminal, zmq/ipykernel) implement
+    it to drive a GUI event loop. judb's console renders everything inline (no
+    event loop in the paused debuggee thread), so ``%matplotlib inline`` — which
+    routes through ``enable_gui('inline')`` — would otherwise blow up. Treat the
+    inline / no-GUI cases as a no-op; a real GUI backend genuinely isn't
+    supported here, so keep the clear error for those.
+    """
+
+    def enable_gui(self, gui: str | None = None) -> None:
+        if gui not in (None, "inline"):
+            raise NotImplementedError(
+                f"judb's console only supports the inline matplotlib backend, not {gui!r}"
+            )
+
+
 def _capture_pager(
     shell: InteractiveShell,
     data: Any,  # noqa: ANN401 — a mime bundle or plain string from the pager
@@ -139,7 +158,11 @@ class Console:
     def __init__(self) -> None:
         # Use the singleton so that display()/get_ipython() route here, which is
         # what makes flush_figures() send figures to our display publisher.
-        self.shell: InteractiveShell = InteractiveShell.instance(
+        # `_InlineShell.instance()` makes our subclass the process singleton, so
+        # `get_ipython()` / `InteractiveShell.instance()` route here too — which
+        # is what lets `%matplotlib inline` (and `display()`, `flush_figures()`)
+        # find this shell.
+        self.shell: InteractiveShell = _InlineShell.instance(
             displayhook_class=_CapturingDisplayHook,
             display_pub_class=_CapturingDisplayPublisher,
         )
