@@ -10,6 +10,12 @@ notebook-style rich console that executes cells **in the currently-paused stack
 frame**. Plot and inspect a paused frame's real objects — DataFrames, arrays,
 xarray Datasets, matplotlib figures — the way you would in a notebook.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot_dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/screenshot_light.png">
+  <img alt="judb's four-pane browser UI: Source, notebook console, Variables, and Call stack, paused in a frame" src="docs/images/screenshot_light.png">
+</picture>
+
 ## Status
 
 Early prototype.
@@ -19,7 +25,11 @@ Early prototype.
 Requires Python ≥ 3.13.
 
 ```bash
-pip install judb          # or, in a checkout: uv sync
+uv add --dev judb
+# Or if you use pip
+pip install judb
+# or, in a checkout of this repo
+uv sync
 ```
 
 Drop `judb.set_trace()` where you want to pause:

@@ -14,6 +14,7 @@ ship the pre-built ``index.html`` — see the ``artifacts`` config in
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -60,12 +61,26 @@ class FrontendBuildHook(BuildHookInterface[Any]):
             msg = (
                 "pnpm is required to build the judb frontend bundle but was not "
                 "found on PATH. Run `corepack enable`, then `make frontend` "
-                "(see CLAUDE.md / PHASE2_STACK.md)."
+                "(see CLAUDE.md / docs/PHASE2_STACK.md)."
             )
             raise RuntimeError(msg)
 
         self.app.display_info("judb: building frontend bundle (pnpm run build)…")
-        subprocess.run([pnpm, "run", "build"], cwd=frontend, check=True)
+        # `frontend/package.json` pins `packageManager: pnpm@…`. If the caller's
+        # corepack-managed pnpm differs, corepack wants to download the pinned
+        # version and, by default, *prompts* for confirmation — which hangs
+        # forever when this hook runs inside a non-interactive `uv sync` /
+        # `pip install` (there is no TTY to answer). Disable that prompt so the
+        # pinned version is fetched automatically, and detach stdin as a
+        # belt-and-suspenders guard against any other interactive pnpm prompt.
+        env = {**os.environ, "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0"}
+        subprocess.run(
+            [pnpm, "run", "build"],
+            cwd=frontend,
+            check=True,
+            env=env,
+            stdin=subprocess.DEVNULL,
+        )
 
         if not bundle.is_file():
             msg = f"frontend build finished but {bundle} was not produced"

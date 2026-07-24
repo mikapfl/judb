@@ -9,7 +9,7 @@ than pdb's ``exec(compile(...))`` string wrapper), so the first traced frame is
 the target itself — no synthetic ``<string>`` frame to skip, hence no
 ``_wait_for_mainpyfile`` dance.
 
-Scope (Phase 3 / Wave A, see PHASE3_PLAN.md A2):
+Scope (Phase 3 / Wave A, see docs/PHASE3_PLAN.md A2):
   * ``python -m judb script.py [args]`` and ``python -m judb -m pkg.mod [args]``.
   * ``-c`` is deliberately absent: pdb's ``-c`` takes *debugger commands*, which
     judb drives from the browser instead.

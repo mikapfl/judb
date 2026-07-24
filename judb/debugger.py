@@ -40,7 +40,7 @@ class Debugger(bdb.Bdb):
         # `pytest --pdbcls=judb:Debugger` wraps us in a `pdb.Pdb`-style subclass
         # and may instantiate with pdb kwargs (completekey/stdin/stdout/nosigint/
         # readrc). We drive the UI over a websocket, not a terminal Cmd loop, so
-        # we accept and ignore them. See PHASE3_PLAN.md A2.
+        # we accept and ignore them. See docs/PHASE3_PLAN.md A2.
         super().__init__(skip=skip)
         self.console = Console()
         self.inbound: queue.Queue[dict[str, Any]] = queue.Queue()

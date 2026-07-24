@@ -120,6 +120,80 @@ jobs:
           path: frontend/test-results/
           retention-days: 7
 
+  # Backs the "Operating System :: OS Independent" classifier: run the Playwright
+  # e2e — which drives the *real* judb server + a browser — on Windows and macOS.
+  # Just the e2e, not the whole test suite: it exercises the server, the paused
+  # frame, rich output, breakpoints and interrupts end to end, so it is the
+  # highest-signal cross-platform check. The Python unit suite and the JS
+  # check/unit steps stay Linux-only (the `test` and `frontend` jobs). Both legs
+  # run in parallel with everything else, so wall-clock CI time is unchanged.
+  e2e-cross-os:
+    name: e2e (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    # Pin Playwright's browser dir and matplotlib's cache dir to fixed absolute
+    # paths on every OS, so a single cache key + path works cross-platform (both
+    # default to per-OS locations: ~/.cache, ~/Library/Caches, %LOCALAPPDATA%).
+    # MPLCONFIGDIR propagates to the debuggee subprocesses `pnpm run e2e` spawns.
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pw-browsers
+      MPLCONFIGDIR: ${{ github.workspace }}/.mpl-cache
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      # The e2e drives a real debuggee (frontend/e2e/debuggee.py), so Python too.
+      - run: uv sync
+      - run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - uses: actions/cache@v6
+        id: playwright-cache
+        with:
+          path: ${{ github.workspace }}/.pw-browsers
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+      # No `--with-deps`: that installs Linux apt packages; the Windows/macOS
+      # Chromium bundles what they need. A cache hit skips the ~120 MB download.
+      - if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install chromium
+        working-directory: frontend
+      # Persist matplotlib's font cache across runs so the one-time build below
+      # is paid only on a miss. Keyed on the OS and uv.lock (which pins the
+      # matplotlib version — a bump rebuilds the cache).
+      - uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.mpl-cache
+          key: mpl-fontcache-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+      # Warm matplotlib's font cache once, serially. On a fresh runner the first
+      # `import matplotlib.pyplot` builds it (10–30 s on macOS); with e2e's two
+      # parallel workers both debuggees hit that build at once and overrun the
+      # 20 s URL timeout, so the first wave of tests fails until the cache exists.
+      # Building it here — outside the timed tests — makes every debuggee start
+      # fast. On a cache hit this import just finds the cache and returns quickly.
+      # (Also byte-compiles numpy/matplotlib.)
+      - run: uv run python -c "import numpy, matplotlib.pyplot"
+      # `pnpm run e2e` builds the bundle first, so the browser tests the current
+      # source.
+      - run: pnpm run e2e
+        working-directory: frontend
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-${{ matrix.os }}
+          path: frontend/test-results/
+          retention-days: 7
+
   package:
     name: wheel + sdist install
     runs-on: ubuntu-latest

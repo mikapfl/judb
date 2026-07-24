@@ -7,6 +7,36 @@ requires-python = ">=3.13"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE", "licenses/*"]
 authors = [{ name = "Mika Pflüger" }]
+keywords = [
+    "debugger",
+    "debugging",
+    "pdb",
+    "pudb",
+    "ipython",
+    "jupyter",
+    "notebook",
+    "datascience",
+    "data-science",
+    "matplotlib",
+    "pandas",
+    "xarray",
+    "visualization",
+]
+# PyPI trove classifiers.
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Debuggers",
+    "Framework :: IPython",
+    "Framework :: Matplotlib",
+]
 # Small runtime deps, matplotlib is needed for our custom
 # renderer.
 dependencies = [
@@ -15,6 +45,15 @@ dependencies = [
     "matplotlib>=3.7",
     "matplotlib-inline>=0.1.6",
 ]
+
+# PyPI "Project links" sidebar. Keys are free-form labels; PyPI gives a few
+# well-known ones icons (Homepage, Source, Documentation, Changelog, Issues).
+[project.urls]
+Homepage = "https://github.com/mikapfl/judb"
+Source = "https://github.com/mikapfl/judb"
+Documentation = "https://github.com/mikapfl/judb#readme"
+Changelog = "https://github.com/mikapfl/judb/blob/main/CHANGELOG.md"
+Issues = "https://github.com/mikapfl/judb/issues"
 
 [project.entry-points."matplotlib.backend"]
 # Registers judb's interactive WebAgg backend so `%matplotlib judb` resolves it

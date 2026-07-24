@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build wheel + sdist and verify a *fresh* install works end to end — the
-# packaging & install story from PHASE3_PLAN.md A1.
+# packaging & install story from docs/PHASE3_PLAN.md A1.
 #
 # Installing the built artifacts needs no Node: the wheel bakes in the frontend
 # bundle, and the sdist ships the pre-built bundle (its build hook finds no

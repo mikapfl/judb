@@ -2,7 +2,7 @@
 
 Runs on a background **daemon thread** with its own asyncio loop, so the
 debuggee thread stays free to block in the debugger's interaction loop (the
-threading model in IMPLEMENTATION_PLAN.md §2). The only seam is the debugger's
+threading model in docs/IMPLEMENTATION_PLAN.md §2). The only seam is the debugger's
 ``inbound``/``outbound`` queues — exactly what Phase 0 already drives from tests
 and the terminal demo, so this server is a drop-in replacement for that driver:
 

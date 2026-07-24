@@ -2,7 +2,7 @@
 a built judb wheel/sdist, with the repo NOT on ``sys.path`` (run it from another
 cwd, e.g. ``/``).
 
-Proves the packaging & install story (PHASE3_PLAN.md A1): the frontend bundle
+Proves the packaging & install story (docs/PHASE3_PLAN.md A1): the frontend bundle
 ships inside the artifact, the server serves it, and a headless ``set_trace``
 round-trip works using **only judb's runtime dependencies**. In particular it
 imports no numpy/pandas — those are dev-only now, so a fresh ``pip install judb``
