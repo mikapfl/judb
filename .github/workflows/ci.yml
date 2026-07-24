@@ -88,6 +88,11 @@ jobs:
         working-directory: frontend
       - run: pnpm run test
         working-directory: frontend
+      # Drop fsync() from dpkg for the rest of the job (via libeatmydata): the
+      # apt-get that Playwright's `install-deps` runs internally is dominated by
+      # fsync, and a throwaway CI runner has nothing to lose if it crashes
+      # mid-install. Configured job-wide, so the nested apt call picks it up.
+      - uses: firebuild/apt-eatmydata-action@v1
       # Cache the downloaded browser binaries (~120 MB) so only a Playwright
       # version bump re-downloads them; keyed on the lockfile, which is what
       # pins the Playwright version. A cache hit still needs the system libs
