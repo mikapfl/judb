@@ -119,6 +119,7 @@ safe_licenses = [
 # several branches in flight don't fight over CHANGELOG.md.
 [tool.towncrier]
 directory = "changelog.d"
+template = "changelog.d/_template.md"
 filename = "CHANGELOG.md"
 start_string = "<!-- towncrier release notes start -->\n"
 underlines = ["", "", ""]
