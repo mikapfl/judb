@@ -8,6 +8,10 @@ Phase-2a codebase. Same conventions: **[DECISION]** = recommended but open,
 
 ## 0. Shape: two waves, ship first
 
+> **Status: Wave A shipped — `judb 0.1.0` is on PyPI.** `pip install judb` works
+> and the entry points (`python -m judb`, `pytest --pdbcls`, `set_trace`) all land
+> in the browser UI. **Wave B is the current focus.**
+
 Phase 2a gave us "something to show the world" — but only to someone sitting at a
 checkout running `make frontend` first. **Wave A makes it *reachable*** (a real
 `pip install`, the entry points people actually use, docs). **Wave B makes it
@@ -130,20 +134,20 @@ Things that don't show up in the demo scripts but bite real users.
   `towncrier check` on PRs. Version single-sourced as `__version__` in
   `judb/__init__.py` (hatchling `dynamic`, towncrier reads it too), so a release
   bumps one line. `0.1.0` fragments for the Wave-A work are already written.
-- **[DECISION] Publish to PyPI as `0.1.0`.** Test-PyPI dry run first, then real.
-  This is the concrete "show the world" deliverable and the natural Wave A exit.
-  *Pipeline done:* `.github/workflows/release.yml` is `workflow_dispatch`-only,
-  takes a `testpypi`/`pypi` target, and rebuilds + re-verifies (tests and the
-  install smoke) before publishing via Trusted Publishing. **Still manual, one
-  time:** register the trusted publisher on both indexes and create the matching
-  `testpypi` / `pypi` GitHub environments, then run the Test-PyPI dry run — all
-  written up step by step in `RELEASING.md`. (Name `judb` verified free on both
-  indexes.)
+- **Publish to PyPI as `0.1.0`. ✅ Done.** `judb 0.1.0` is live on PyPI —
+  `pip install judb` works. This is the concrete "show the world" deliverable and
+  the Wave A exit. The one-time setup (trusted publishers + `testpypi`/`pypi`
+  GitHub environments) and the Test-PyPI dry run are all complete;
+  `.github/workflows/release.yml` (`workflow_dispatch`-only, `testpypi`/`pypi`
+  target, rebuilds + re-verifies tests and the install smoke before publishing via
+  Trusted Publishing) drove the release. `RELEASING.md` documents the procedure for
+  the next bump.
 
-**Wave A exit:** a stranger runs `pip install judb`, then either
+**Wave A exit: ✅ reached.** A stranger runs `pip install judb`, then either
 `python -m judb their_script.py` or `pytest --pdbcls=judb:Debugger` (or adds
 `judb.set_trace()`), and lands in the browser UI — with no checkout, no Node, no
-`make frontend`.
+`make frontend`. (Remaining polish — the README demo GIF — is nice-to-have, not a
+gate.)
 
 ---
 

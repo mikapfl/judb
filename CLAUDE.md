@@ -15,8 +15,12 @@ Read `REQUIREMENT_ANALYSIS.md` (motivation) and `IMPLEMENTATION_PLAN.md`
 changes. The plan is the source of truth for *why* things are shaped the way they
 are; its §5 defines the phases and each phase's exit criterion.
 
-**Current status: Phase 2 complete (four-pane app, the MVP).** Phase 1 (vertical
-slice) is complete: `judb.set_trace()` starts a localhost websocket server
+**Current status: Phase 3 Wave A shipped — `judb 0.1.0` is on PyPI** (`pip install
+judb` works; entry points `python -m judb`, `pytest --pdbcls`, and `set_trace` all
+land in the browser UI). Wave B (deepen the debugger — conditional breakpoints,
+break-on-exception, watch expressions, multi-file source, settings) is the current
+focus; see `PHASE3_PLAN.md`. Phase 2 (four-pane app, the MVP) is complete. Phase 1
+(vertical slice) is complete: `judb.set_trace()` starts a localhost websocket server
 (`judb/server.py`) and opens a browser page served from `judb/static/index.html`.
 That page is now the **built Svelte SPA** (source in `frontend/`, see below), not
 the old hand-written HTML: a four-pane layout (Source / Variables / Console / Call
@@ -31,8 +35,8 @@ the next `continue`), and interrupting a runaway console cell (`interrupt`, sent
 from the server thread since the busy debuggee thread can't drain the command
 queue: a real SIGINT for a main-thread debuggee — breaks blocking C calls like
 `time.sleep`, as Ctrl+C does — else `PyThreadState_SetAsyncExc`, which only breaks
-pure-Python execution) are all done. Next up is Phase 3 (fit & finish — see
-`IMPLEMENTATION_PLAN.md` §5).
+pure-Python execution) are all done — that four-pane MVP is what Wave A then
+packaged and shipped as `0.1.0`.
 
 ## Commands
 
