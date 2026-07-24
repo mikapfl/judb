@@ -143,7 +143,7 @@ def test_forked_child_gets_its_own_server(tmp_path: Path):
                 mp.set_start_method("fork", force=True)
                 proc = mp.Process(target=child)
                 proc.start()
-                proc.join(timeout=5)
+                proc.join(timeout=2)
                 print("CHILD_PAUSED", proc.is_alive(), flush=True)
                 proc.terminate()
             """
