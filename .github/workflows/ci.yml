@@ -166,6 +166,13 @@ jobs:
       - if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm exec playwright install chromium
         working-directory: frontend
+      # Warm matplotlib's font cache once, serially. On a fresh runner the first
+      # `import matplotlib.pyplot` builds it (10–30 s on macOS); with e2e's two
+      # parallel workers both debuggees hit that build at once and overrun the
+      # 20 s URL timeout, so the first wave of tests fails until the cache exists.
+      # Building it here — outside the timed tests — makes every debuggee start
+      # fast. (Also byte-compiles numpy/matplotlib.)
+      - run: uv run python -c "import numpy, matplotlib.pyplot"
       # `pnpm run e2e` builds the bundle first, so the browser tests the current
       # source.
       - run: pnpm run e2e
