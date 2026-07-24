@@ -367,6 +367,16 @@ test("refreshing the page while paused restores the UI", async ({ page }) => {
     await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
     await expect(page.locator(".source")).toContainText("np.linspace");
 
+    // Set a breakpoint before reloading: it must survive the refresh, in both
+    // the gutter and the breakpoints pane (regression — a reload used to drop
+    // every breakpoint, since the set arrives as a one-shot message).
+    await page
+      .locator(".source .cm-breakpoint-gutter .cm-gutterElement:visible")
+      .first()
+      .click();
+    await expect(page.locator(".source .cm-breakpoint")).toHaveCount(1, { timeout: 10_000 });
+    await expect(page.locator(".breakpoints li")).toHaveCount(1);
+
     await page.reload();
 
     // Same paused frame, repopulated from the replay.
@@ -374,6 +384,10 @@ test("refreshing the page while paused restores the UI", async ({ page }) => {
     await expect(page.locator(".source")).toContainText("np.linspace");
     await expect(page.locator(".vars")).toContainText("data");
     await expect(page.locator(".stack")).toContainText("compute");
+
+    // The breakpoint came back with the replayed state.
+    await expect(page.locator(".source .cm-breakpoint")).toHaveCount(1);
+    await expect(page.locator(".breakpoints li")).toHaveCount(1);
 
     // And it is still driveable: the console runs in the paused frame.
     const cell = page.locator(".cell .cm-content").first();
