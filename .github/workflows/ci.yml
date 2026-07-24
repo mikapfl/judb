@@ -32,7 +32,7 @@ jobs:
       # bundle. A real wheel/sdist still refuses to build without pnpm; the
       # `package` job covers that path.
       - run: uv sync --python ${{ matrix.python }}
-      - run: uv run --python ${{ matrix.python }} pytest -q
+      - run: uv run --python ${{ matrix.python }} pytest -ra --durations=10
 
   lint:
     name: lint, pylic, changelog

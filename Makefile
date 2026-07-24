@@ -14,7 +14,7 @@ dev:  ## Set up a full dev environment (deps + extras + pre-commit hook)
 	uv run pre-commit install
 
 test:  ## Run all Python tests
-	uv run pytest
+	uv run pytest --durations=10 -ra
 
 lint:  ## Run all linting and formatting
 	uv run pre-commit run --all-files
