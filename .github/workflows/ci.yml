@@ -35,7 +35,7 @@ jobs:
       - run: uv run --python ${{ matrix.python }} pytest -q
 
   lint:
-    name: lint + licenses + changelog
+    name: lint, pylic, changelog
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -102,7 +102,7 @@ jobs:
           retention-days: 7
 
   package:
-    name: wheel + sdist install smoke
+    name: wheel + sdist install
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
