@@ -20,7 +20,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.13 is the floor (`requires-python`); 3.14 is the forward guard.
         python: ["3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
@@ -52,7 +51,7 @@ jobs:
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
-      # `--all-extras` is required, not cosmetic: ty resolves the imports in
+      # `--all-extras` is required: ty resolves the imports in
       # scripts/demo_rich.py (polars, xarray, …), and pylic's allowlist is
       # calibrated against the full dependency set.
       - run: uv sync --all-extras
@@ -80,7 +79,7 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
-      # The Playwright e2e drives a *real* debuggee (frontend/e2e/debuggee.py),
+      # The Playwright e2e drives a real debuggee (frontend/e2e/debuggee.py),
       # so this job needs the Python environment as well as Node.
       - run: uv sync
       - run: pnpm install --frozen-lockfile
