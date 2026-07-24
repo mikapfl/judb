@@ -130,6 +130,34 @@ test("toggle a breakpoint from the source gutter", async ({ page }) => {
   }
 });
 
+test("set a conditional breakpoint from the gutter popover", async ({ page }) => {
+  const { proc, url } = await startDebuggee();
+
+  try {
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+
+    // Right-click a gutter line to open the breakpoint editor, give it a
+    // condition, and save. The marker becomes a diamond (cm-breakpoint-cond).
+    const gutterLine = page
+      .locator(".source .cm-breakpoint-gutter .cm-gutterElement:visible")
+      .first();
+    await gutterLine.click({ button: "right" });
+
+    const popover = page.locator(".source .popover");
+    await expect(popover).toBeVisible();
+    await popover.getByPlaceholder("e.g. i == 3").fill("scale == 2.0");
+    await popover.getByRole("button", { name: "Save" }).click();
+
+    await expect(popover).toBeHidden();
+    await expect(page.locator(".source .cm-breakpoint-cond")).toHaveCount(1, {
+      timeout: 10_000,
+    });
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
+
 test("interrupt a runaway console cell", async ({ page }) => {
   const { proc, url } = await startDebuggee();
 

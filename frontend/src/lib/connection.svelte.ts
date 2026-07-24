@@ -2,6 +2,7 @@
 // commands go out through `conn.send(...)`. See PHASE2_STACK.md §6.
 
 import type {
+  Breakpoint,
   Command,
   CompletionsMsg,
   FrameView,
@@ -58,10 +59,10 @@ class Connection {
   // cell. Cells persist across steps (you build up a notebook and re-run cells
   // as you step), so this is never cleared on pause.
   cells = $state<Cell[]>([{ id: 0, code: "", outputs: [], pending: false, count: null }]);
-  // 1-based line numbers with a breakpoint in the currently-shown file. The
-  // source pane only ever edits the displayed frame's file, so a flat list
-  // (refreshed on every frame change) is enough for the gutter.
-  breakpoints = $state<number[]>([]);
+  // Breakpoints in the currently-shown file (with their cond/temporary/ignore
+  // options). The source pane only ever edits the displayed frame's file, so a
+  // flat list (refreshed on every frame change) is enough for the gutter.
+  breakpoints = $state<Breakpoint[]>([]);
   // Lazily-fetched variable subtrees, keyed by JSON.stringify(path). Cleared
   // whenever the targeted frame changes, since locals differ per frame.
   expanded = $state<Record<string, ExpandState>>({});
@@ -204,8 +205,32 @@ class Connection {
   // backend replies with a `breakpoints` message that refreshes the list.
   toggleBreak(line: number): void {
     if (!this.filename) return;
-    const cmd = this.breakpoints.includes(line) ? "clear_break" : "set_break";
+    const cmd = this.breakpointAt(line) ? "clear_break" : "set_break";
     this.send({ cmd, filename: this.filename, line });
+  }
+
+  /** The breakpoint set on `line` in the shown file, or undefined. */
+  breakpointAt(line: number): Breakpoint | undefined {
+    return this.breakpoints.find((b) => b.line === line);
+  }
+
+  // Set (or update) a breakpoint with condition/temporary/ignore options. An
+  // empty condition means unconditional; re-setting an existing line updates it.
+  setBreak(line: number, opts: Omit<Breakpoint, "line"> = {}): void {
+    if (!this.filename) return;
+    this.send({
+      cmd: "set_break",
+      filename: this.filename,
+      line,
+      cond: opts.cond ?? null,
+      temporary: opts.temporary ?? false,
+      ignore: opts.ignore ?? 0,
+    });
+  }
+
+  clearBreak(line: number): void {
+    if (!this.filename) return;
+    this.send({ cmd: "clear_break", filename: this.filename, line });
   }
 
   // --- interrupt ------------------------------------------------------
@@ -332,9 +357,9 @@ class Connection {
       }
       case "breakpoints":
         // A set/clear reply for the file the source pane is showing. On a
-        // rejected line (`error`), `lines` simply omits it, so the gutter dot
-        // never appears — that missing dot is the feedback.
-        this.breakpoints = msg.lines;
+        // rejected line (`error`), `breakpoints` simply omits it, so the gutter
+        // dot never appears — that missing dot is the feedback.
+        this.breakpoints = msg.breakpoints;
         if (msg.error) console.warn("breakpoint:", msg.error);
         break;
       case "error":

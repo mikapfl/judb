@@ -249,7 +249,14 @@ class Debugger(bdb.Bdb):
             return False
 
         if cmd in ("set_break", "clear_break"):
-            self._toggle_break(cmd, msg.get("filename"), msg.get("line"))
+            self._toggle_break(
+                cmd,
+                msg.get("filename"),
+                msg.get("line"),
+                cond=msg.get("cond"),
+                temporary=msg.get("temporary", False),
+                ignore=msg.get("ignore", 0),
+            )
             return False
 
         if cmd == "quit":
@@ -443,9 +450,22 @@ class Debugger(bdb.Bdb):
             return
         self._emit({"type": "expanded", "path": path, **node})
 
-    def _toggle_break(self, cmd: str, filename: object, line: object) -> None:
+    def _toggle_break(
+        self,
+        cmd: str,
+        filename: object,
+        line: object,
+        cond: object = None,
+        temporary: object = False,
+        ignore: object = 0,
+    ) -> None:
         """Set/clear a line breakpoint from the source gutter, then echo the
-        file's breakpoint lines back so the gutter can redraw.
+        file's breakpoints back so the gutter can redraw.
+
+        A ``set_break`` may carry an optional ``cond`` (a Python expression that
+        must be truthy for the breakpoint to fire), a ``temporary`` flag (the
+        breakpoint auto-clears after firing once), and an ``ignore`` count (skip
+        the first *n* hits) — bdb supports all three natively.
 
         bdb keeps tracing installed after ``continue`` whenever any breakpoint
         exists, so a breakpoint set while paused fires on the next ``continue``.
@@ -460,24 +480,97 @@ class Debugger(bdb.Bdb):
             The source file to toggle the breakpoint in.
         line
             The 1-based line number.
+        cond
+            For ``set_break``, an optional condition expression (empty/blank
+            means unconditional).
+        temporary
+            For ``set_break``, whether the breakpoint clears itself after firing.
+        ignore
+            For ``set_break``, how many hits to skip before it fires.
         """
         if not isinstance(filename, str) or not isinstance(line, int):
             self._emit({"type": "error", "message": "bad breakpoint request"})
             return
-        # set_break returns an error string (e.g. "line has no code"); None on ok.
-        err = (
-            self.set_break(filename, line)
-            if cmd == "set_break"
-            else self.clear_break(filename, line)
-        )
+        # set_break/clear_break return an error string (e.g. "line has no code")
+        # on failure, None on success.
+        if cmd == "set_break":
+            # Re-setting a line *replaces* its breakpoint rather than stacking a
+            # second bdb Breakpoint on top (bdb.set_break always appends), so the
+            # gutter's one-breakpoint-per-line view stays true and cond/temporary/
+            # ignore act as an update of the breakpoint already shown.
+            if self.get_breaks(filename, line):
+                self.clear_break(filename, line)
+            condition = cond if isinstance(cond, str) and cond.strip() else None
+            err = self.set_break(
+                filename, line, temporary=bool(temporary), cond=condition
+            )
+            count = ignore if isinstance(ignore, int) and ignore > 0 else 0
+            if not err and count:
+                for bp in self.get_breaks(filename, line):
+                    bp.ignore = count
+        else:
+            err = self.clear_break(filename, line)
         message: dict[str, Any] = {
             "type": "breakpoints",
             "filename": filename,
-            "lines": sorted(self.get_file_breaks(filename)),
+            "breakpoints": self._file_breaks(filename),
         }
         if err:
             message["error"] = err
         self._emit(message)
+
+    def do_clear(self, arg: str) -> None:
+        """Delete the breakpoint whose number is ``arg``.
+
+        ``bdb`` leaves this abstract but calls it itself to remove a *temporary*
+        breakpoint once it has fired (``break_here`` → ``do_clear(str(bp.number))``),
+        so a ``Debugger`` that never defined it would raise ``NotImplementedError``
+        the moment a one-shot breakpoint triggered. We only need the single-number
+        form bdb uses.
+
+        Parameters
+        ----------
+        arg
+            The breakpoint number, as a string (bdb's calling convention).
+        """
+        try:
+            number = int(arg)
+        except (TypeError, ValueError):
+            return
+        err = self.clear_bpbynumber(number)
+        if err:
+            self._emit({"type": "error", "message": err})
+
+    def _file_breaks(self, filename: str) -> list[dict[str, Any]]:
+        """The breakpoints in ``filename`` as records the gutter can render.
+
+        Each record is the breakpoint's line plus its bdb options
+        (``cond``/``temporary``/``ignore``), so the UI can mark a conditional or
+        one-shot breakpoint distinctly from a plain one. ``ignore`` reflects the
+        *remaining* skips (bdb decrements it as the line is hit).
+
+        Parameters
+        ----------
+        filename
+            The source file to describe breakpoints for.
+
+        Returns
+        -------
+        One record per breakpoint line, sorted by line number.
+        """
+        out: list[dict[str, Any]] = []
+        for line in sorted(self.get_file_breaks(filename)):
+            bps = self.get_breaks(filename, line)
+            bp = bps[-1] if bps else None
+            out.append(
+                {
+                    "line": line,
+                    "cond": bp.cond if bp and bp.cond else None,
+                    "temporary": bool(bp.temporary) if bp else False,
+                    "ignore": bp.ignore if bp and bp.ignore > 0 else 0,
+                }
+            )
+        return out
 
     def _frame_view(self, frame: FrameType) -> dict[str, Any]:
         """The per-frame fields shared by ``paused`` and ``frame_selected``.
@@ -490,7 +583,7 @@ class Debugger(bdb.Bdb):
         Returns
         -------
         The frame's filename, line number, function name, sorted local names,
-        full source, and breakpoint lines.
+        full source, and breakpoint records (see :meth:`_file_breaks`).
         """
         return {
             "filename": frame.f_code.co_filename,
@@ -498,7 +591,7 @@ class Debugger(bdb.Bdb):
             "function": frame.f_code.co_name,
             "locals": sorted(frame.f_locals),
             "source": "".join(linecache.getlines(frame.f_code.co_filename)),
-            "breakpoints": sorted(self.get_file_breaks(frame.f_code.co_filename)),
+            "breakpoints": self._file_breaks(frame.f_code.co_filename),
         }
 
     def _emit_cell_result(self, result: CellResult) -> None:
