@@ -175,6 +175,14 @@ test("interrupt a cell blocked in a C call, not just a Python loop", async ({ pa
   // (Limit worth knowing: this covers blocking *syscalls*. A long CPU-bound C
   // routine such as a big BLAS call still only unwinds once it returns to
   // Python — a CPython-wide constraint, cf. Jupyter's "interrupt kernel".)
+  // The break-a-blocking-C-call guarantee is POSIX-only: it relies on a real
+  // SIGINT (pthread_kill), which the debugger uses only where it exists. On
+  // Windows the interrupt falls back to SetAsyncExc, which lands at the next
+  // bytecode and so cannot preempt a C-level `time.sleep` — by design (see
+  // Debugger.interrupt). The pure-Python runaway-loop interrupt is still covered
+  // on every OS by the test above.
+  test.skip(process.platform === "win32", "SIGINT-breaks-a-C-call is POSIX-only");
+
   const { proc, url } = await startDebuggee();
 
   try {
