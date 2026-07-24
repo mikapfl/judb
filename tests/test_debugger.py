@@ -271,11 +271,17 @@ def test_set_break_stops_at_a_later_line():
             # Echoed on pause too.
             assert [b["line"] for b in paused2["breakpoints"]] == [target]
 
-            # Clear it and run to completion.
+            # Clear it via the filename the breakpoints pane holds (from
+            # all_breakpoints), then run to completion. The reply's filename must
+            # equal paused["filename"] so the browser refreshes the shown file's
+            # gutter — the two diverged under Windows normcase, stranding the dot.
+            pane_filename = bp["all_breakpoints"][0]["filename"]
+            assert pane_filename == fname
             await ws.send_json(
-                {"cmd": "clear_break", "filename": fname, "line": target}
+                {"cmd": "clear_break", "filename": pane_filename, "line": target}
             )
             cleared = await recv_type(ws, "breakpoints")
+            assert cleared["filename"] == fname
             assert cleared["breakpoints"] == []
             await ws.send_json({"cmd": "continue"})
             await recv_type(ws, "running")

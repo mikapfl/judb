@@ -2,7 +2,8 @@
   import { conn } from "../lib/connection.svelte";
   import type { BreakpointLocation } from "../protocol";
 
-  const base = (path: string) => path.split("/").pop() ?? path;
+  // Basename, tolerant of both POSIX and Windows separators.
+  const base = (path: string) => path.split(/[\\/]/).pop() ?? path;
 
   // Group breakpoints by file, keeping the backend's (filename, line) order.
   const groups = $derived.by(() => {

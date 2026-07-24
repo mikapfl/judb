@@ -677,13 +677,20 @@ class Debugger(bdb.Bdb):
         The frame's filename, line number, function name, sorted local names,
         full source, and breakpoint records (see :meth:`_file_breaks`).
         """
+        # Report bdb's *canonical* filename, the same identity `_all_breaks` and
+        # `self.breaks` use, so the browser can match a breakpoint's file against
+        # the shown frame's file by string equality. Raw `co_filename` and canonic
+        # diverge under `os.path.normcase` on Windows (case/separator folding),
+        # which otherwise left a pane-cleared breakpoint's gutter dot stranded.
+        # Source is still read from the raw path (identical contents either way).
+        filename = self.canonic(frame.f_code.co_filename)
         return {
-            "filename": frame.f_code.co_filename,
+            "filename": filename,
             "lineno": frame.f_lineno,
             "function": frame.f_code.co_name,
             "locals": sorted(frame.f_locals),
             "source": "".join(linecache.getlines(frame.f_code.co_filename)),
-            "breakpoints": self._file_breaks(frame.f_code.co_filename),
+            "breakpoints": self._file_breaks(filename),
         }
 
     def _emit_cell_result(self, result: CellResult) -> None:
@@ -748,7 +755,9 @@ class Debugger(bdb.Bdb):
         # frames too, whose f_back chain would not reproduce the failure stack.
         return [
             {
-                "filename": f.f_code.co_filename,
+                # Canonical, matching `_frame_view` (see there) so the call stack
+                # and source panes agree on each frame's file identity.
+                "filename": self.canonic(f.f_code.co_filename),
                 "lineno": f.f_lineno,
                 "function": f.f_code.co_name,
             }
