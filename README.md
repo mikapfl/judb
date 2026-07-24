@@ -25,7 +25,11 @@ Early prototype.
 Requires Python ≥ 3.13.
 
 ```bash
-pip install judb          # or, in a checkout: uv sync
+uv add --dev judb
+# Or if you use pip
+pip install judb
+# or, in a checkout of this repo
+uv sync
 ```
 
 Drop `judb.set_trace()` where you want to pause:
