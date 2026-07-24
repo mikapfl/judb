@@ -88,7 +88,21 @@ jobs:
         working-directory: frontend
       - run: pnpm run test
         working-directory: frontend
-      - run: pnpm exec playwright install --with-deps chromium
+      # Cache the downloaded browser binaries (~120 MB) so only a Playwright
+      # version bump re-downloads them; keyed on the lockfile, which is what
+      # pins the Playwright version. A cache hit still needs the system libs
+      # `--with-deps` would install (apt packages live outside ~/.cache), but
+      # `install-deps` alone is quick — the browser download is the slow part.
+      - uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+      - if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+        working-directory: frontend
+      - if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
         working-directory: frontend
       # `pnpm run e2e` builds the bundle first, so the browser always tests
       # the current source.
