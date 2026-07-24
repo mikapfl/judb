@@ -93,7 +93,7 @@ jobs:
       # pins the Playwright version. A cache hit still needs the system libs
       # `--with-deps` would install (apt packages live outside ~/.cache), but
       # `install-deps` alone is quick — the browser download is the slow part.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         id: playwright-cache
         with:
           path: ~/.cache/ms-playwright
