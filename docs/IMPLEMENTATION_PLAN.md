@@ -375,9 +375,13 @@ first* then *deepen*), grounded in the Phase-2a codebase. **Wave A is shipped:
 `judb 0.1.0` is on PyPI** — `pip install judb`, the `python -m judb` /
 `pytest --pdbcls` entry points, real-program robustness, CI, and the towncrier
 changelog are all in place (Wave A also moved the misplaced `pre-commit` runtime
-dep and slimmed `numpy`/`pandas` into extras). **Wave B is the current focus:**
-conditional/temporary breakpoints, break-on-exception + post-mortem, watch
-expressions, multi-file source, a minimal settings layer.
+dep and slimmed `numpy`/`pandas` into extras). **Wave B is underway:** B1 —
+conditional/temporary/ignore-count breakpoints — is **shipped** (PR #4), with a
+gutter condition-editor popover, breakpoints that snap off blank/comment lines to
+the next statement, and a **Breakpoints pane** listing every breakpoint across
+files (delivering B4's panel early). Still ahead in Wave B: break-on-exception +
+post-mortem, watch expressions, multi-file *navigation* (`open_file`), and a
+minimal settings layer.
 
 **Phase 3a – saved debug expressions.** Add a way to save + load cell sources
 close to the source, so repeated debugging can re-use cells. Things to consider

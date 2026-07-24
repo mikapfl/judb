@@ -8,9 +8,11 @@ Phase-2a codebase. Same conventions: **[DECISION]** = recommended but open,
 
 ## 0. Shape: two waves, ship first
 
-> **Status: Wave A shipped — `judb 0.1.0` is on PyPI.** `pip install judb` works
-> and the entry points (`python -m judb`, `pytest --pdbcls`, `set_trace`) all land
-> in the browser UI. **Wave B is the current focus.**
+> **Status: Wave A shipped — `judb 0.1.0` is on PyPI** (`0.2.0` followed with
+> install/CI tweaks). `pip install judb` works and the entry points
+> (`python -m judb`, `pytest --pdbcls`, `set_trace`) all land in the browser UI.
+> **Wave B in progress: B1 is done and merged** (PR #4, *feat: better
+> breakpoints*), which also delivered B4's breakpoints panel. B2–B5 remain.
 
 Phase 2a gave us "something to show the world" — but only to someone sitting at a
 checkout running `make frontend` first. **Wave A makes it *reachable*** (a real
@@ -156,20 +158,37 @@ gate.)
 Each item is a small protocol addition + a pane/affordance. Keep `src/protocol.ts`
 in sync with `judb/protocol.py` (the hand-mirrored contract).
 
-### B1. Conditional / temporary / ignore-count breakpoints
+### B1. Conditional / temporary / ignore-count breakpoints — ✅ Done (PR #4)
 
 Nearly free — `bdb.set_break(filename, lineno, temporary, cond, funcname)` already
-supports all of it; `_toggle_break` (`debugger.py:295`) just hard-codes none of the
-options through.
+supports all of it; `_toggle_break` just hard-coded none of the options through.
 
-- Backend: extend the `set_break` command with optional `cond` (string),
-  `temporary` (bool), and an `ignore` count; pass them to `set_break` / `set_ignore`.
-- Frontend: the gutter breakpoint gains a small editor (right-click / click-hold on
-  the gutter marker → a popover for the condition & options). Echo condition state
-  back in the `breakpoints` message so the gutter can show conditional bps
-  distinctly.
-- *Exit:* a breakpoint with `cond="i == 3"` fires only on that iteration; a
-  temporary bp auto-clears after firing once — both covered by a ws test.
+- **Backend.** The `set_break` command carries optional `cond` (string),
+  `temporary` (bool) and `ignore` (int); a re-set on a line *replaces* its
+  breakpoint rather than stacking a second bdb `Breakpoint` on it (so the options
+  act as an update). `do_clear` had to be implemented: bdb calls it to auto-remove
+  a temporary breakpoint after it fires, and base `Bdb` leaves it abstract — a
+  one-shot breakpoint would otherwise `NotImplementedError`. The `breakpoints`
+  reply and every frame view now carry rich `{line, cond, temporary, ignore}`
+  records (mirrored as `Breakpoint`/`BreakpointLocation` in `protocol.ts`).
+- **Frontend.** A conditional/one-shot breakpoint renders as a diamond marker
+  (warn colour) with its options in a tooltip. Right-clicking the gutter opens a
+  popover editor (condition / temporary / ignore) — triggered off the
+  `contextmenu` event so `preventDefault` reliably cancels the native menu
+  (a `mousedown`-based first cut leaked the browser menu in Firefox once the
+  popover backdrop became the event target).
+- **Two follow-ons landed with it.** (a) Setting a breakpoint on a blank or
+  comment-only line now **snaps forward** to the next line with executable code —
+  found by compiling the source and collecting each code object's `co_lines()` —
+  or raises a **dismissable notice** bar (new `notice` store field) when there is
+  none. (b) Breakpoints **survive a browser reconnect**: the server folds each
+  one-shot `breakpoints` message into the cached paused snapshot, and file
+  identity is bdb's *canonical* path throughout the protocol (`_frame_view` /
+  `_stack_summary` too), so clearing a breakpoint from the pane also clears its
+  gutter dot on Windows (raw `co_filename` vs `normcase`d canonic had diverged).
+- *Exit met:* `cond="i == 3"` fires only on that iteration and a temporary bp
+  auto-clears after firing — both ws-tested; plus snap/reconnect ws tests, store
+  vitest, and Playwright (popover, pane, refresh).
 
 ### B2. Break-on-exception & post-mortem
 
@@ -206,21 +225,24 @@ selected frame on every pause and after each cell run.
   like Phase 3a cells).
 - *Exit:* add `df.shape` as a watch; step; the pane updates each stop.
 
-### B4. Multi-file source navigation
+### B4. Multi-file source navigation — partly done (PR #4)
 
 Today the Source pane always shows the current/selected frame's file
 (`_frame_view` → `linecache.getlines`). Two levels of ambition:
 
-- **Cheap (recommend for Phase 3):** clicking a stack frame already retargets to its
-  file (works). Add: breakpoints list/panel showing all bps across files, click-to-
-  open; and open-any-file-by-path (so you can set a breakpoint in a not-yet-hit
-  file before `continue`). Source is read via `linecache`, so serving an arbitrary
-  project file is a new `open_file(path)` → `source` message.
+- **✅ Breakpoints panel (PR #4).** A **Breakpoints pane** (bottom row, left of the
+  call stack) lists every breakpoint across all files, grouped by file, each with
+  its cond/temporary/ignore and a per-row remove button that works cross-file (the
+  server sends an `all_breakpoints` list — each record carrying its filename — on
+  `paused` and on every `breakpoints` reply).
+- **Still open:** *click-to-open* a breakpoint's file from the pane, and an
+  `open_file(path)` → `source` message so you can view and set a breakpoint in a
+  not-yet-hit file before `continue` (source is read via `linecache`, so serving an
+  arbitrary project file is cheap). This is what unlocks the exit below.
 - **[OPEN] Deferrable:** a file tree / fuzzy file-open. Nice, but scope-creep toward
-  an editor. Recommend deferring the tree to Phase 4; ship path-open + breakpoints
-  panel now.
-- *Exit:* set a breakpoint in a file the debuggee hasn't reached yet, `continue`,
-  and stop there.
+  an editor. Deferred to Phase 4; ship path-open next.
+- *Exit (not yet met):* set a breakpoint in a file the debuggee hasn't reached yet,
+  `continue`, and stop there.
 
 ### B5. Settings / configuration
 
@@ -238,10 +260,11 @@ No config layer exists. Introduce a minimal one rather than a big framework.
 
 ## Cross-cutting
 
-- **Protocol deltas (all additive):** client→server `set_break` gains
-  `cond`/`temporary`/`ignore`; new `set_watches`, `open_file`; server→client new
-  `watches`, and `paused` gains an optional exception payload. Mirror each in
-  `judb/protocol.py` **and** `frontend/src/protocol.ts`.
+- **Protocol deltas (all additive):** ✅ `set_break` gained
+  `cond`/`temporary`/`ignore` and `paused`/`breakpoints` gained `all_breakpoints`
+  (PR #4). Still to come: `set_watches`, `open_file`; server→client `watches`; and
+  `paused` gaining an optional exception payload. Mirror each in `judb/protocol.py`
+  **and** `frontend/src/protocol.ts`.
 - **Tests:** every backend command gets a Python ws test (extend
   `tests/test_debugger.py` or `tests/test_entrypoints.py`); the exception-pause and
   conditional-bp paths get Playwright coverage. Keep `make test` + `make
