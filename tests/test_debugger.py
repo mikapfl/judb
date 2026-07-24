@@ -251,6 +251,16 @@ def test_set_break_stops_at_a_later_line():
             assert bp["breakpoints"] == [
                 {"line": target, "cond": None, "temporary": False, "ignore": 0}
             ]
+            # The global list (for the breakpoints pane) carries the file too.
+            assert bp["all_breakpoints"] == [
+                {
+                    "filename": fname,
+                    "line": target,
+                    "cond": None,
+                    "temporary": False,
+                    "ignore": 0,
+                }
+            ]
             assert "error" not in bp
 
             # Continue: bdb keeps tracing while a breakpoint exists, so we stop.

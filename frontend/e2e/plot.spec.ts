@@ -158,6 +158,33 @@ test("set a conditional breakpoint from the gutter popover", async ({ page }) =>
   }
 });
 
+test("the breakpoints pane lists a breakpoint and removes it", async ({ page }) => {
+  const { proc, url } = await startDebuggee();
+
+  try {
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+
+    const pane = page.locator(".breakpoints");
+    await expect(pane).toContainText("No breakpoints");
+
+    // Set a breakpoint from the gutter; the pane lists it (with its file).
+    const gutterLine = page
+      .locator(".source .cm-breakpoint-gutter .cm-gutterElement:visible")
+      .first();
+    await gutterLine.click();
+    await expect(pane.locator("li")).toHaveCount(1, { timeout: 10_000 });
+    await expect(pane).toContainText("debuggee.py");
+
+    // Remove it from the pane; both the row and the gutter dot go.
+    await pane.getByRole("button", { name: "Remove breakpoint" }).click();
+    await expect(pane).toContainText("No breakpoints", { timeout: 10_000 });
+    await expect(page.locator(".source .cm-breakpoint")).toHaveCount(0);
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
+
 test("interrupt a runaway console cell", async ({ page }) => {
   const { proc, url } = await startDebuggee();
 

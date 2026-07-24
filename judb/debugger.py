@@ -368,6 +368,7 @@ class Debugger(bdb.Bdb):
             **self._frame_view(frame),
             "stack": self._stack_summary(),
             "selected": self._selected,
+            "all_breakpoints": self._all_breaks(),
         }
         if self._is_postmortem:
             message["postmortem"] = True
@@ -514,6 +515,7 @@ class Debugger(bdb.Bdb):
             "type": "breakpoints",
             "filename": filename,
             "breakpoints": self._file_breaks(filename),
+            "all_breakpoints": self._all_breaks(),
         }
         if err:
             message["error"] = err
@@ -570,6 +572,22 @@ class Debugger(bdb.Bdb):
                     "ignore": bp.ignore if bp and bp.ignore > 0 else 0,
                 }
             )
+        return out
+
+    def _all_breaks(self) -> list[dict[str, Any]]:
+        """Every breakpoint across all files, for the breakpoints pane.
+
+        Like :meth:`_file_breaks` but flattened over all files, each record also
+        carrying its ``filename`` so the pane can group and navigate by file.
+
+        Returns
+        -------
+        One record per breakpoint, sorted by filename then line.
+        """
+        out: list[dict[str, Any]] = []
+        for filename in sorted(self.breaks):
+            for rec in self._file_breaks(filename):
+                out.append({"filename": filename, **rec})
         return out
 
     def _frame_view(self, frame: FrameType) -> dict[str, Any]:

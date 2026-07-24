@@ -54,6 +54,12 @@ export interface Breakpoint {
   ignore?: number;
 }
 
+/** A breakpoint plus the file it lives in — for the global breakpoints pane,
+ *  which spans every file, not just the currently-shown one. */
+export interface BreakpointLocation extends Breakpoint {
+  filename: string;
+}
+
 /** Per-frame fields shared by `paused` and `frame_selected`. */
 export interface FrameView {
   filename: string;
@@ -70,6 +76,8 @@ export interface PausedMsg extends FrameView {
   stack: StackFrame[];
   /** Index into `stack` of the initially-targeted (innermost) frame. */
   selected: number;
+  /** Every breakpoint across all files (for the breakpoints pane). */
+  all_breakpoints: BreakpointLocation[];
 }
 
 export interface FrameSelectedMsg extends FrameView {
@@ -120,6 +128,8 @@ export interface BreakpointsMsg {
   type: "breakpoints";
   filename: string;
   breakpoints: Breakpoint[];
+  /** Every breakpoint across all files (for the breakpoints pane). */
+  all_breakpoints: BreakpointLocation[];
   error?: string;
 }
 

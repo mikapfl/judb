@@ -3,6 +3,7 @@
 
 import type {
   Breakpoint,
+  BreakpointLocation,
   Command,
   CompletionsMsg,
   FrameView,
@@ -63,6 +64,10 @@ class Connection {
   // options). The source pane only ever edits the displayed frame's file, so a
   // flat list (refreshed on every frame change) is enough for the gutter.
   breakpoints = $state<Breakpoint[]>([]);
+  // Every breakpoint across all files (with its file), for the breakpoints pane.
+  // Refreshed on pause and on any set/clear; the per-file `breakpoints` above is
+  // just the slice the gutter of the shown file needs.
+  allBreakpoints = $state<BreakpointLocation[]>([]);
   // Lazily-fetched variable subtrees, keyed by JSON.stringify(path). Cleared
   // whenever the targeted frame changes, since locals differ per frame.
   expanded = $state<Record<string, ExpandState>>({});
@@ -228,9 +233,11 @@ class Connection {
     });
   }
 
-  clearBreak(line: number): void {
-    if (!this.filename) return;
-    this.send({ cmd: "clear_break", filename: this.filename, line });
+  // Clear a breakpoint. Defaults to the shown file (the gutter); the breakpoints
+  // pane passes an explicit filename to clear one in any file.
+  clearBreak(line: number, filename: string = this.filename): void {
+    if (!filename) return;
+    this.send({ cmd: "clear_break", filename, line });
   }
 
   // --- interrupt ------------------------------------------------------
@@ -316,6 +323,7 @@ class Connection {
         this.stack = msg.stack ?? [];
         this.selected = msg.selected ?? this.stack.length - 1;
         this.expanded = {};
+        this.allBreakpoints = msg.all_breakpoints ?? [];
         this.#showFrame(msg);
         break;
       case "frame_selected":
@@ -356,10 +364,13 @@ class Connection {
         break;
       }
       case "breakpoints":
-        // A set/clear reply for the file the source pane is showing. On a
-        // rejected line (`error`), `breakpoints` simply omits it, so the gutter
-        // dot never appears — that missing dot is the feedback.
-        this.breakpoints = msg.breakpoints;
+        // A set/clear reply. On a rejected line (`error`), `breakpoints` simply
+        // omits it, so the gutter dot never appears — that missing dot is the
+        // feedback. Only refresh the gutter if the reply is for the file the
+        // source pane is showing (a clear from the breakpoints pane may target
+        // another file); the pane's own list always refreshes.
+        if (msg.filename === this.filename) this.breakpoints = msg.breakpoints;
+        this.allBreakpoints = msg.all_breakpoints;
         if (msg.error) console.warn("breakpoint:", msg.error);
         break;
       case "error":
