@@ -10,7 +10,7 @@ currently-paused stack frame**. The point is to plot/inspect a paused frame's
 real objects (DataFrames, arrays, matplotlib figures) the way you would in a
 notebook — something neither pdb/pudb nor a papermill-wrapped notebook does well.
 
-Read `REQUIREMENT_ANALYSIS.md` (motivation) and `IMPLEMENTATION_PLAN.md`
+Read `docs/REQUIREMENT_ANALYSIS.md` (motivation) and `docs/IMPLEMENTATION_PLAN.md`
 (architecture, design decisions, phased roadmap) before making non-trivial
 changes. The plan is the source of truth for *why* things are shaped the way they
 are; its §5 defines the phases and each phase's exit criterion.
@@ -19,7 +19,7 @@ are; its §5 defines the phases and each phase's exit criterion.
 judb` works; entry points `python -m judb`, `pytest --pdbcls`, and `set_trace` all
 land in the browser UI). Wave B (deepen the debugger — conditional breakpoints,
 break-on-exception, watch expressions, multi-file source, settings) is the current
-focus; see `PHASE3_PLAN.md`. Phase 2 (four-pane app, the MVP) is complete. Phase 1
+focus; see `docs/PHASE3_PLAN.md`. Phase 2 (four-pane app, the MVP) is complete. Phase 1
 (vertical slice) is complete: `judb.set_trace()` starts a localhost websocket server
 (`judb/server.py`) and opens a browser page served from `judb/static/index.html`.
 That page is now the **built Svelte SPA** (source in `frontend/`, see below), not
@@ -71,7 +71,7 @@ via `towncrier check`. Fragments never collide, so branches in flight don't
 fight over the changelog. **You never run `make changelog` by hand** — the
 release workflow runs it for a `pypi` release and commits the result back;
 `make changelog-draft` is a preview that consumes nothing. See
-`changelog.d/README.md` and `RELEASING.md`.
+`changelog.d/README.md` and `docs/RELEASING.md`.
 
 **Version.** Single source of truth is `[project] version` in `pyproject.toml`
 (static, so `uv version` can bump it — it refuses dynamic versions).
@@ -84,7 +84,7 @@ takes a `target` input (`testpypi` | `pypi`), rebuilds and re-verifies the
 artifacts, then publishes via PyPI **Trusted Publishing** (OIDC, no stored
 token). Each target maps to a GitHub *environment* of the same name, so `pypi`
 can require a reviewer. The one-time setup (GitHub environments + trusted
-publishers) and the release procedure itself are in **`RELEASING.md`**.
+publishers) and the release procedure itself are in **`docs/RELEASING.md`**.
 
 ### Tests (`tests/`, organised by topic)
 
@@ -126,7 +126,7 @@ never `npm install` here). Targets:
   a one-time `cd frontend && pnpm exec playwright install chromium`.
 - `make frontend-install` — `pnpm install`.
 
-The stack and its resolved decisions live in `PHASE2_STACK.md` — read it before
+The stack and its resolved decisions live in `docs/PHASE2_STACK.md` — read it before
 changing the frontend's shape.
 
 ## Architecture — the crux

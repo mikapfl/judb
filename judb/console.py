@@ -1,7 +1,7 @@
 """Embedded IPython shell that executes cells in the paused frame's namespace
 and captures rich output as Jupyter mime bundles — no ZMQ kernel needed.
 
-The recipe (validated as a spike, see IMPLEMENTATION_PLAN.md §1):
+The recipe (validated as a spike, see docs/IMPLEMENTATION_PLAN.md §1):
 
 * a custom ``DisplayHook`` captures the value of the last expression instead of
   printing an ``Out[..]`` prompt,
@@ -237,7 +237,7 @@ class Console:
         If ``frame`` is given, the frame's globals and locals are injected into
         the shell namespace first, so the cell sees the paused frame's real
         objects. (For Phase 0, writes land in the shell scratch namespace rather
-        than back into the frame — see the risk table in IMPLEMENTATION_PLAN.md.)
+        than back into the frame — see the risk table in docs/IMPLEMENTATION_PLAN.md.)
 
         Parameters
         ----------

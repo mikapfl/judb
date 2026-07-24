@@ -61,7 +61,7 @@ class FrontendBuildHook(BuildHookInterface[Any]):
             msg = (
                 "pnpm is required to build the judb frontend bundle but was not "
                 "found on PATH. Run `corepack enable`, then `make frontend` "
-                "(see CLAUDE.md / PHASE2_STACK.md)."
+                "(see CLAUDE.md / docs/PHASE2_STACK.md)."
             )
             raise RuntimeError(msg)
 
