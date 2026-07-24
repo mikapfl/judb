@@ -10,6 +10,12 @@ notebook-style rich console that executes cells **in the currently-paused stack
 frame**. Plot and inspect a paused frame's real objects — DataFrames, arrays,
 xarray Datasets, matplotlib figures — the way you would in a notebook.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot_dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/screenshot_light.png">
+  <img alt="judb's four-pane browser UI: Source, notebook console, Variables, and Call stack, paused in a frame" src="docs/images/screenshot_light.png">
+</picture>
+
 ## Status
 
 Early prototype.
