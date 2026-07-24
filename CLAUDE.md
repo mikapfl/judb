@@ -49,6 +49,9 @@ packaged and shipped as `0.1.0`.
 - `uv run ty check` — type-check only.
 - `uv run python scripts/demo_p2.py` — run a demo debuggee and drive it from the
   browser UI (`scripts/demo_rich.py` for a spread of rich objects).
+- `uv run python -m judb scripts/demo_crash.py` — demo the break-on-exception /
+  post-mortem flow: it crashes, judb pauses on the failing frame (Continue past
+  the stop-on-entry), and the Exception pane shows the colored traceback.
 
 Use `uv` for everything (deps live in `pyproject.toml`; `uv sync` to install  - or use `uv add` directly).
 pre-commit is installed as a git hook, so commits are gated on the same checks as `make lint`.

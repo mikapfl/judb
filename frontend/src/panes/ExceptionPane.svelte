@@ -3,7 +3,13 @@
   // `--pdb`, or `-m judb` catching a crash). Empty when there is no exception —
   // an ordinary pause shows nothing here. Type + message sit at the top; the
   // full formatted traceback fills the rest as a scrollable block.
+  import Anser from "anser";
   import { conn } from "../lib/connection.svelte";
+
+  // The backend formats the traceback with IPython's own machinery, so it
+  // carries the same ANSI color codes a raising console cell does. anser escapes
+  // HTML entities, so {@html} is safe here (cf. Output.svelte).
+  const ansi = (s: string) => Anser.ansiToHtml(s, { use_classes: false });
 </script>
 
 <div class="exception">
@@ -13,7 +19,7 @@
       <span class="exc-msg">{conn.exception.message}</span>
     </div>
     {#if conn.exception.traceback?.length}
-      <pre class="exc-tb">{conn.exception.traceback.join("")}</pre>
+      <pre class="exc-tb">{@html ansi(conn.exception.traceback.join(""))}</pre>
     {/if}
   {:else}
     <p class="empty">No exception.</p>

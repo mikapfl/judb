@@ -114,6 +114,27 @@ def test_exception_becomes_error_output():
     assert errors and errors[0].data["ename"] == "ZeroDivisionError"
 
 
+def test_format_traceback_is_ansi_colored():
+    """The post-mortem Exception pane reuses IPython's traceback formatter, so
+    the traceback carries the same ANSI color codes a raising cell does."""
+    import re
+
+    def boom() -> None:
+        raise ValueError("kaboom")
+
+    lines: list[str] = []
+    try:
+        boom()
+    except ValueError as exc:
+        lines = Console().format_traceback(exc)
+
+    assert lines, "boom() should have raised"
+    assert any("\x1b[" in line for line in lines)  # ANSI color escapes present
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", "".join(lines))
+    assert "ValueError: kaboom" in plain
+    assert "boom" in plain  # the raising frame appears in the traceback
+
+
 def test_inspect_gets_rich_bundle_for_ipython_display_objects():
     """Values that render via `_ipython_display_` (e.g. plotly figures) must
     still yield their rich mime bundle when inspected in the Variables tree.

@@ -21,7 +21,6 @@ import signal
 import sys
 import threading
 import time
-import traceback
 from collections.abc import Iterable
 from types import CodeType, FrameType, TracebackType
 from typing import TYPE_CHECKING, Any
@@ -399,9 +398,10 @@ class Debugger(bdb.Bdb):
             message["exception"] = {
                 "type": type(self._exc).__name__,
                 "message": str(self._exc),
-                # The full formatted traceback, so the UI can show the crash's
-                # call chain as a rich, cell-style block (not just type/message).
-                "traceback": traceback.format_exception(self._exc),
+                # The syntax-highlighted (ANSI) traceback, formatted by the same
+                # IPython machinery a raising cell goes through, so the Exception
+                # pane's coloring matches the console's exactly.
+                "traceback": self.console.format_traceback(self._exc),
             }
         self._emit(message)
 
