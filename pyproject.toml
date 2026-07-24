@@ -49,6 +49,7 @@ dev = [
     # Build backend; also a dev dep so ty can resolve hatch_build.py's imports.
     "hatchling",
     "towncrier>=25.8.0",
+    "pytest-xdist>=3.8.0",
 ]
 
 [build-system]

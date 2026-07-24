@@ -30,8 +30,14 @@ bound to a specific environment name. A mismatch means the upload is rejected.
 
 ### 2. Register a trusted publisher on each index
 
-judb does not exist on either index yet, so both are registered as a **pending
-publisher** (the form for a project that has never been published).
+> **Done as of `0.1.0`.** This one-time setup is complete: trusted publishers are
+> registered on both indexes and `judb 0.1.0` is published on PyPI. The steps
+> below are kept as a record (and in case the publisher ever needs re-registering).
+
+Originally, judb did not exist on either index, so both were registered as a
+**pending publisher** (the form for a project that has never been published);
+after the first publish PyPI promotes it to an ordinary trusted publisher
+automatically.
 
 - Test-PyPI: <https://test.pypi.org/manage/account/publishing/>
 - PyPI: <https://pypi.org/manage/account/publishing/>

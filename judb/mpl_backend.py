@@ -61,14 +61,27 @@ _managers: dict[str, FigureManagerWebAgg] = {}
 
 
 def is_active() -> bool:
-    """Whether judb's interactive backend is the current matplotlib backend —
-    whether reached via ``%matplotlib judb`` (reports ``"judb"``) or
-    ``matplotlib.use(BACKEND)`` (reports the module string)."""
+    """Whether judb's interactive backend is the current matplotlib backend.
+
+    True whether reached via ``%matplotlib judb`` (reports ``"judb"``) or
+    ``matplotlib.use(BACKEND)`` (reports the module string).
+
+    Returns
+    -------
+    Whether judb's interactive backend is currently active.
+    """
     return matplotlib.get_backend() in (BACKEND, "judb")
 
 
 def set_emitter(emit: Callable[[dict[str, Any]], None] | None) -> None:
-    """Wire the outbound channel used to stream figure⇄browser messages."""
+    """Wire the outbound channel used to stream figure⇄browser messages.
+
+    Parameters
+    ----------
+    emit
+        Callback that pushes a message onto judb's outbound channel, or ``None``
+        to detach (no interactivity).
+    """
     global _emit
     _emit = emit
 
@@ -119,9 +132,16 @@ class _BackendJudb(_Backend):
 
 
 def announce_new_figures() -> list[str]:
-    """Register a socket for every not-yet-announced open figure and return their
-    ids, so the console can emit a mount notice for each. Called at cell end (the
-    judb analogue of matplotlib-inline's ``flush_figures``)."""
+    """Register a socket for every not-yet-announced open figure.
+
+    Called at cell end (the judb analogue of matplotlib-inline's
+    ``flush_figures``), so the console can emit a mount notice for each new
+    figure.
+
+    Returns
+    -------
+    The ids of the figures announced by this call.
+    """
     new: list[str] = []
     for raw in Gcf.get_all_fig_managers():
         # Our backend only ever makes FigureManagerJudb (a FigureManagerWebAgg);
@@ -138,8 +158,17 @@ def announce_new_figures() -> list[str]:
 
 
 def dispatch(fig_id: str, content: dict[str, Any]) -> None:
-    """Feed one browser event to a figure's canvas (runs on the debuggee thread
-    via the interaction loop)."""
+    """Feed one browser event to a figure's canvas.
+
+    Runs on the debuggee thread via the interaction loop.
+
+    Parameters
+    ----------
+    fig_id
+        The target figure's id; unknown ids are ignored.
+    content
+        The WebAgg event payload (its ``type`` selects the canvas action).
+    """
     manager = _managers.get(fig_id)
     if manager is None:
         return
@@ -159,10 +188,20 @@ def dispatch(fig_id: str, content: dict[str, Any]) -> None:
 
 
 def download(fig_id: str, fmt: str) -> None:
-    """Render a figure with ``savefig`` in the requested format (png/svg/pdf/…)
-    and stream it to the browser. Runs on the debuggee thread (via the
-    interaction loop) since it touches the figure; the WebAgg canvas is raster,
-    so vector formats *must* come from ``savefig``, not the client canvas."""
+    """Render a figure with ``savefig`` and stream it to the browser.
+
+    Runs on the debuggee thread (via the interaction loop) since it touches the
+    figure; the WebAgg canvas is raster, so vector formats *must* come from
+    ``savefig``, not the client canvas.
+
+    Parameters
+    ----------
+    fig_id
+        The target figure's id; unknown ids are ignored.
+    fmt
+        The output format (``png``/``svg``/``pdf``/…). A savefig failure is
+        streamed back as a ``download_error``.
+    """
     manager = _managers.get(fig_id)
     if manager is None:
         return

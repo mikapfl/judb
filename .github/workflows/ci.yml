@@ -32,7 +32,7 @@ jobs:
       # bundle. A real wheel/sdist still refuses to build without pnpm; the
       # `package` job covers that path.
       - run: uv sync --python ${{ matrix.python }}
-      - run: uv run --python ${{ matrix.python }} pytest -q
+      - run: uv run --python ${{ matrix.python }} pytest -ra --durations=10 -n 8
 
   lint:
     name: lint, pylic, changelog
@@ -88,7 +88,26 @@ jobs:
         working-directory: frontend
       - run: pnpm run test
         working-directory: frontend
-      - run: pnpm exec playwright install --with-deps chromium
+      # Drop fsync() from dpkg for the rest of the job (via libeatmydata): the
+      # apt-get that Playwright's `install-deps` runs internally is dominated by
+      # fsync, and a throwaway CI runner has nothing to lose if it crashes
+      # mid-install. Configured job-wide, so the nested apt call picks it up.
+      - uses: firebuild/apt-eatmydata-action@v1
+      # Cache the downloaded browser binaries (~120 MB) so only a Playwright
+      # version bump re-downloads them; keyed on the lockfile, which is what
+      # pins the Playwright version. A cache hit still needs the system libs
+      # `--with-deps` would install (apt packages live outside ~/.cache), but
+      # `install-deps` alone is quick — the browser download is the slow part.
+      - uses: actions/cache@v6
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+      - if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+        working-directory: frontend
+      - if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
         working-directory: frontend
       # `pnpm run e2e` builds the bundle first, so the browser always tests
       # the current source.

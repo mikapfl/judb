@@ -24,10 +24,19 @@ _active_debugger: Debugger | None = None
 def set_trace(*, open_browser: bool = True) -> Debugger:
     """Start (or reuse) a debugger tracing from the caller's frame.
 
-    Launches the websocket server and opens a browser tab on first use (pass
-    ``open_browser=False`` to skip the tab, e.g. on a headless box). Returns the
-    :class:`Debugger` so callers/tests can also drive its command queues directly.
-    Wire it up as the ``breakpoint()`` hook via ``PYTHONBREAKPOINT=judb.set_trace``.
+    Launches the websocket server and opens a browser tab on first use. Wire it
+    up as the ``breakpoint()`` hook via ``PYTHONBREAKPOINT=judb.set_trace``.
+
+    Parameters
+    ----------
+    open_browser
+        Whether to open a browser tab on first use. Pass ``False`` to skip the
+        tab, e.g. on a headless box.
+
+    Returns
+    -------
+    The active :class:`Debugger`, so callers/tests can also drive its command
+    queues directly.
     """
     import sys
 

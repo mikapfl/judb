@@ -29,6 +29,7 @@ import matplotlib
 # publisher via flush_figures(); no GUI / display server required.
 matplotlib.use("module://matplotlib_inline.backend_inline")
 
+from IPython.core.completer import provisionalcompleter
 from IPython.core.displayhook import DisplayHook
 from IPython.core.displaypub import DisplayPublisher
 from IPython.core.error import TryNext
@@ -125,6 +126,22 @@ def _capture_pager(
     debuggee's stdout, not in judb. Appending it to ``_capture`` turns it into a
     normal ``display_data`` output rendered in the console instead. When no cell
     is running (no active buffer) we defer to the default pager via ``TryNext``.
+
+    Parameters
+    ----------
+    shell
+        The shell invoking the hook (unused; part of the hook signature).
+    data
+        A mime bundle or plain string produced by the pager.
+    start
+        First line to page from (unused; part of the hook signature).
+    screen_lines
+        Terminal height hint (unused; part of the hook signature).
+
+    Raises
+    ------
+    TryNext
+        When no cell is running, to fall back to IPython's default pager.
     """
     if _capture is None:
         raise TryNext
@@ -144,6 +161,13 @@ def _pydoc_pager(text: str, title: str = "") -> None:
     redirect. Replacing ``pydoc.pager`` outright sidesteps the cache: while a cell
     runs we capture the text (stripping pydoc's ``\\b`` overstrike bolding via
     ``pydoc.plain``); otherwise we page normally without re-clobbering ourselves.
+
+    Parameters
+    ----------
+    text
+        The help text pydoc would otherwise page to the terminal.
+    title
+        The pager title (used only when falling back to the default pager).
     """
     if _capture is None:
         pydoc.getpager()(text, title)
@@ -214,6 +238,19 @@ class Console:
         the shell namespace first, so the cell sees the paused frame's real
         objects. (For Phase 0, writes land in the shell scratch namespace rather
         than back into the frame — see the risk table in IMPLEMENTATION_PLAN.md.)
+
+        Parameters
+        ----------
+        code
+            The cell source to execute.
+        frame
+            The paused frame to run the cell against. When ``None``, the cell
+            runs in the shell's own namespace.
+
+        Returns
+        -------
+        The captured stream, result, display, and error outputs, plus whether
+        the cell succeeded.
         """
         global _capture
         outputs: list[Output] = []
@@ -262,6 +299,11 @@ class Console:
         user bound in a cell (notebook-style scratch persists). So we track the
         frame names we injected and the base values they shadowed, undo that,
         then inject the new frame — remembering what it shadows in turn.
+
+        Parameters
+        ----------
+        frame
+            The frame whose globals and locals should become visible to cells.
         """
         ns = self.shell.user_ns
         for key in self._injected:
@@ -276,7 +318,19 @@ class Console:
         self._injected = set(new_vars)
 
     def evaluate(self, code: str, frame: FrameType | None = None) -> Any:  # noqa: ANN401
-        """Convenience for tests: run ``code`` and return its ``text/plain``."""
+        """Convenience for tests: run ``code`` and return its ``text/plain``.
+
+        Parameters
+        ----------
+        code
+            The cell source to execute.
+        frame
+            The paused frame to run the cell against (see :meth:`run_cell`).
+
+        Returns
+        -------
+        The first output's ``text/plain`` payload, or ``None`` if none.
+        """
         return self.run_cell(code, frame).first_of("text/plain")
 
     # --- tab completion ---------------------------------------------------
@@ -286,21 +340,38 @@ class Console:
     ) -> tuple[int, list[str]]:
         """Complete ``code`` at offset ``cursor`` against the frame's namespace.
 
-        Returns ``(replace_from, matches)`` where ``matches`` are full
-        replacements for the text spanning ``[replace_from, cursor)`` — the shape
-        CodeMirror's autocomplete wants. Completion runs against the *current*
-        line only (IPython's completer is line-oriented), so ``replace_from`` is
-        an absolute offset into ``code``.
+        Parameters
+        ----------
+        code
+            The full (possibly multi-line) cell source.
+        cursor
+            The absolute offset into ``code`` at which to complete. Clamped to
+            ``[0, len(code)]``.
+        frame
+            The frame whose namespace completions are drawn from.
+
+        Returns
+        -------
+        ``(replace_from, matches)`` where ``matches`` are full replacements for
+        the text spanning ``[replace_from, cursor)`` — the shape CodeMirror's
+        autocomplete wants — and ``replace_from`` is an absolute offset into
+        ``code``.
         """
         if frame is not None:
             self._sync_frame_namespace(frame)
         cursor = max(0, min(cursor, len(code)))
-        line_start = code.rfind("\n", 0, cursor) + 1
-        line = code[line_start:cursor]
-        fragment, matches = self.shell.Completer.complete(
-            text=None, line_buffer=line, cursor_pos=len(line)
-        )
-        return cursor - len(fragment), list(matches)
+        # `completions` replaces the pending-deprecated `Completer.complete`. It
+        # takes an absolute cursor offset into the full (multi-line) `code` and
+        # yields `Completion`s, each with a `.start` offset and the replacement
+        # `.text` for `code[start:cursor]`. It's a provisional API, so it has to
+        # run inside `provisionalcompleter()`.
+        with provisionalcompleter():
+            comps = list(self.shell.Completer.completions(code, cursor))
+        if not comps:
+            return cursor, []
+        # With `use_jedi = False` every match replaces the same span, so reporting
+        # one `replace_from` (all CodeMirror wants) is exact.
+        return comps[0].start, [c.text for c in comps]
 
     # --- lazy variable inspection -----------------------------------------
 
@@ -308,11 +379,23 @@ class Console:
         """Resolve ``path`` against ``frame`` and return its repr + children.
 
         ``path`` starts with a ``("name", <local>)`` step and descends by
-        attribute / item / index. The returned ``repr`` is a Jupyter mime bundle
-        (so a DataFrame renders as an HTML table in the same ``<Output>`` the
-        console uses); ``children`` are one level deep, each carrying the full
-        path to expand it in turn. Resolution reads the frame's real objects
+        attribute / item / index. Resolution reads the frame's real objects
         directly — it never runs user code or touches the shell namespace.
+
+        Parameters
+        ----------
+        frame
+            The frame whose real objects ``path`` is resolved against.
+        path
+            A list of ``[kind, key]`` steps, the first being ``("name", <local>)``
+            and the rest descending by ``attr`` / ``item`` / ``index``.
+
+        Returns
+        -------
+        ``{"repr": <mime bundle>, "children": [...]}``. ``repr`` is a Jupyter
+        mime bundle (so a DataFrame renders as an HTML table in the same
+        ``<Output>`` the console uses); ``children`` are one level deep, each
+        carrying the full path to expand it in turn.
         """
         obj = self._resolve(frame, path)
         return {
