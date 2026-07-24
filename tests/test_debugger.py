@@ -429,6 +429,68 @@ def test_temporary_breakpoint_clears_after_firing():
     assert not thread.is_alive()
 
 
+def test_executable_lines_and_snapping(tmp_path: Path):
+    """A breakpoint snaps forward off a blank/comment line to the next statement.
+
+    Blank and comment-only lines carry no code, so bdb would record a dead
+    breakpoint there. ``_first_breakable_line`` moves it to the next executable
+    line, or returns ``None`` when the click is past the last statement.
+    """
+    src = tmp_path / "sample.py"
+    src.write_text("x = 1\n\n# comment\ny = 2\n\n")  # statements on lines 1 and 4
+
+    dbg = Debugger()
+    assert dbg._executable_lines(str(src)) == {1, 4}
+    assert dbg._first_breakable_line(str(src), 1) == 1  # a statement stays put
+    assert dbg._first_breakable_line(str(src), 2) == 4  # blank → next statement
+    assert dbg._first_breakable_line(str(src), 3) == 4  # comment → next statement
+    assert dbg._first_breakable_line(str(src), 5) is None  # nothing left to break on
+
+
+def test_set_break_on_blank_line_snaps_to_next_statement():
+    """Clicking a comment line in the gutter sets the breakpoint on the next
+    real statement instead, and reports no error."""
+    dbg = Debugger()
+    url = dbg.start_server(open_browser=False)
+
+    def debuggee() -> None:
+        dbg.set_trace()  # first pause lands on the next line (`a = 1`)
+        a = 1
+        # a comment — no statement on this line
+        b = 2
+        _ = (a, b)
+
+    thread = threading.Thread(target=debuggee)
+    thread.start()
+
+    async def flow() -> None:
+        async with ClientSession() as session, session.ws_connect(ws_url(url)) as ws:
+            paused = await recv_type(ws, "paused")
+            fname = paused["filename"]
+            comment_line = paused["lineno"] + 1  # the comment
+            statement_line = paused["lineno"] + 2  # `b = 2`
+
+            await ws.send_json(
+                {"cmd": "set_break", "filename": fname, "line": comment_line}
+            )
+            bp = await recv_type(ws, "breakpoints")
+            assert "error" not in bp
+            # Snapped forward to the next executable line.
+            assert [b["line"] for b in bp["breakpoints"]] == [statement_line]
+
+            # Clear (at the snapped line) and finish so the thread completes.
+            await ws.send_json(
+                {"cmd": "clear_break", "filename": fname, "line": statement_line}
+            )
+            await recv_type(ws, "breakpoints")
+            await ws.send_json({"cmd": "continue"})
+            await recv_type(ws, "running")
+
+    asyncio.run(flow())
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
 def test_interrupt_stops_a_runaway_cell():
     """A cell stuck in an infinite Python loop is stopped by ``interrupt``,
     which raises KeyboardInterrupt into the debuggee thread; the cell comes back

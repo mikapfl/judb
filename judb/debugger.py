@@ -22,7 +22,7 @@ import sys
 import threading
 import time
 from collections.abc import Iterable
-from types import FrameType, TracebackType
+from types import CodeType, FrameType, TracebackType
 from typing import TYPE_CHECKING, Any
 
 from . import mpl_backend
@@ -495,20 +495,29 @@ class Debugger(bdb.Bdb):
         # set_break/clear_break return an error string (e.g. "line has no code")
         # on failure, None on success.
         if cmd == "set_break":
-            # Re-setting a line *replaces* its breakpoint rather than stacking a
-            # second bdb Breakpoint on top (bdb.set_break always appends), so the
-            # gutter's one-breakpoint-per-line view stays true and cond/temporary/
-            # ignore act as an update of the breakpoint already shown.
-            if self.get_breaks(filename, line):
-                self.clear_break(filename, line)
-            condition = cond if isinstance(cond, str) and cond.strip() else None
-            err = self.set_break(
-                filename, line, temporary=bool(temporary), cond=condition
-            )
-            count = ignore if isinstance(ignore, int) and ignore > 0 else 0
-            if not err and count:
-                for bp in self.get_breaks(filename, line):
-                    bp.ignore = count
+            # A blank or comment-only line carries no code, so a breakpoint there
+            # never fires — confusing. Snap forward to the next line that can
+            # actually stop; if there is none, report it rather than set a dead
+            # breakpoint.
+            effective = self._first_breakable_line(filename, line)
+            if effective is None:
+                err = f"No statement to break on at or after line {line}."
+            else:
+                line = effective
+                # Re-setting a line *replaces* its breakpoint rather than stacking
+                # a second bdb Breakpoint on top (bdb.set_break always appends), so
+                # the gutter's one-breakpoint-per-line view stays true and cond/
+                # temporary/ignore act as an update of the breakpoint already shown.
+                if self.get_breaks(filename, line):
+                    self.clear_break(filename, line)
+                condition = cond if isinstance(cond, str) and cond.strip() else None
+                err = self.set_break(
+                    filename, line, temporary=bool(temporary), cond=condition
+                )
+                count = ignore if isinstance(ignore, int) and ignore > 0 else 0
+                if not err and count:
+                    for bp in self.get_breaks(filename, line):
+                        bp.ignore = count
         else:
             err = self.clear_break(filename, line)
         message: dict[str, Any] = {
@@ -520,6 +529,71 @@ class Debugger(bdb.Bdb):
         if err:
             message["error"] = err
         self._emit(message)
+
+    def _first_breakable_line(self, filename: str, line: int) -> int | None:
+        """The first line at or after ``line`` where a breakpoint can fire.
+
+        A user can click a blank or comment-only line in the gutter; bdb would
+        record a breakpoint there, but no line event ever occurs on it so it
+        silently never triggers. Instead we snap forward to the next line that
+        carries executable code.
+
+        Parameters
+        ----------
+        filename
+            The source file the breakpoint is in.
+        line
+            The 1-based line the user asked for.
+
+        Returns
+        -------
+        ``line`` itself if it is executable, else the next executable line after
+        it, or ``None`` if there is none (e.g. the click was below the last
+        statement). Falls back to ``line`` when the source cannot be parsed, so
+        an unreadable file is left to bdb rather than blocked here.
+        """
+        executable = self._executable_lines(filename)
+        if not executable:
+            return line
+        if line in executable:
+            return line
+        later = [ln for ln in executable if ln > line]
+        return min(later) if later else None
+
+    @staticmethod
+    def _executable_lines(filename: str) -> set[int]:
+        """The set of lines in ``filename`` that can carry a breakpoint.
+
+        Compiles the source and collects every line number that appears in any
+        code object's ``co_lines()`` — exactly the lines where a trace/line event
+        (and therefore a breakpoint) can fire. Returns an empty set if the source
+        is unavailable or does not compile, so callers can fall back gracefully.
+
+        Parameters
+        ----------
+        filename
+            The source file to analyse.
+
+        Returns
+        -------
+        The 1-based line numbers that carry executable code.
+        """
+        source = "".join(linecache.getlines(filename))
+        if not source:
+            return set()
+        try:
+            code = compile(source, filename, "exec")
+        except (SyntaxError, ValueError):
+            return set()
+        lines: set[int] = set()
+        stack: list[CodeType] = [code]
+        while stack:
+            current = stack.pop()
+            stack.extend(k for k in current.co_consts if isinstance(k, CodeType))
+            for _start, _end, lineno in current.co_lines():
+                if lineno:
+                    lines.add(lineno)
+        return lines
 
     def do_clear(self, arg: str) -> None:
         """Delete the breakpoint whose number is ``arg``.

@@ -68,6 +68,9 @@ class Connection {
   // Refreshed on pause and on any set/clear; the per-file `breakpoints` above is
   // just the slice the gutter of the shown file needs.
   allBreakpoints = $state<BreakpointLocation[]>([]);
+  // A transient, user-dismissable message (e.g. a rejected breakpoint). Set by
+  // the store, cleared by the user or by the next successful breakpoint action.
+  notice = $state<string | null>(null);
   // Lazily-fetched variable subtrees, keyed by JSON.stringify(path). Cleared
   // whenever the targeted frame changes, since locals differ per frame.
   expanded = $state<Record<string, ExpandState>>({});
@@ -371,7 +374,9 @@ class Connection {
         // another file); the pane's own list always refreshes.
         if (msg.filename === this.filename) this.breakpoints = msg.breakpoints;
         this.allBreakpoints = msg.all_breakpoints;
-        if (msg.error) console.warn("breakpoint:", msg.error);
+        // Surface a rejected breakpoint as a dismissable notice; a successful
+        // set/clear clears any lingering one.
+        this.notice = msg.error ?? null;
         break;
       case "error":
         // Surface protocol errors as a synthetic error output on the last cell.
