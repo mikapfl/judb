@@ -134,11 +134,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest]
-    # Pin Playwright's browser dir to one absolute path on every OS, so a single
-    # cache key + path works cross-platform (the default location is per-OS:
-    # ~/.cache, ~/Library/Caches, %LOCALAPPDATA%).
+    # Pin Playwright's browser dir and matplotlib's cache dir to fixed absolute
+    # paths on every OS, so a single cache key + path works cross-platform (both
+    # default to per-OS locations: ~/.cache, ~/Library/Caches, %LOCALAPPDATA%).
+    # MPLCONFIGDIR propagates to the debuggee subprocesses `pnpm run e2e` spawns.
     env:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pw-browsers
+      MPLCONFIGDIR: ${{ github.workspace }}/.mpl-cache
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v9.0.0
@@ -166,12 +168,20 @@ jobs:
       - if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm exec playwright install chromium
         working-directory: frontend
+      # Persist matplotlib's font cache across runs so the one-time build below
+      # is paid only on a miss. Keyed on the OS and uv.lock (which pins the
+      # matplotlib version — a bump rebuilds the cache).
+      - uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.mpl-cache
+          key: mpl-fontcache-${{ runner.os }}-${{ hashFiles('uv.lock') }}
       # Warm matplotlib's font cache once, serially. On a fresh runner the first
       # `import matplotlib.pyplot` builds it (10–30 s on macOS); with e2e's two
       # parallel workers both debuggees hit that build at once and overrun the
       # 20 s URL timeout, so the first wave of tests fails until the cache exists.
       # Building it here — outside the timed tests — makes every debuggee start
-      # fast. (Also byte-compiles numpy/matplotlib.)
+      # fast. On a cache hit this import just finds the cache and returns quickly.
+      # (Also byte-compiles numpy/matplotlib.)
       - run: uv run python -c "import numpy, matplotlib.pyplot"
       # `pnpm run e2e` builds the bundle first, so the browser tests the current
       # source.
