@@ -29,6 +29,7 @@ import matplotlib
 # publisher via flush_figures(); no GUI / display server required.
 matplotlib.use("module://matplotlib_inline.backend_inline")
 
+from IPython.core.completer import provisionalcompleter
 from IPython.core.displayhook import DisplayHook
 from IPython.core.displaypub import DisplayPublisher
 from IPython.core.error import TryNext
@@ -288,19 +289,24 @@ class Console:
 
         Returns ``(replace_from, matches)`` where ``matches`` are full
         replacements for the text spanning ``[replace_from, cursor)`` — the shape
-        CodeMirror's autocomplete wants. Completion runs against the *current*
-        line only (IPython's completer is line-oriented), so ``replace_from`` is
-        an absolute offset into ``code``.
+        CodeMirror's autocomplete wants. ``replace_from`` is an absolute offset
+        into ``code``.
         """
         if frame is not None:
             self._sync_frame_namespace(frame)
         cursor = max(0, min(cursor, len(code)))
-        line_start = code.rfind("\n", 0, cursor) + 1
-        line = code[line_start:cursor]
-        fragment, matches = self.shell.Completer.complete(
-            text=None, line_buffer=line, cursor_pos=len(line)
-        )
-        return cursor - len(fragment), list(matches)
+        # `completions` replaces the pending-deprecated `Completer.complete`. It
+        # takes an absolute cursor offset into the full (multi-line) `code` and
+        # yields `Completion`s, each with a `.start` offset and the replacement
+        # `.text` for `code[start:cursor]`. It's a provisional API, so it has to
+        # run inside `provisionalcompleter()`.
+        with provisionalcompleter():
+            comps = list(self.shell.Completer.completions(code, cursor))
+        if not comps:
+            return cursor, []
+        # With `use_jedi = False` every match replaces the same span, so reporting
+        # one `replace_from` (all CodeMirror wants) is exact.
+        return comps[0].start, [c.text for c in comps]
 
     # --- lazy variable inspection -----------------------------------------
 
