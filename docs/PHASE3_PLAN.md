@@ -12,7 +12,10 @@ Phase-2a codebase. Same conventions: **[DECISION]** = recommended but open,
 > install/CI tweaks). `pip install judb` works and the entry points
 > (`python -m judb`, `pytest --pdbcls`, `set_trace`) all land in the browser UI.
 > **Wave B in progress: B1 is done and merged** (PR #4, *feat: better
-> breakpoints*), which also delivered B4's breakpoints panel. B2–B5 remain.
+> breakpoints*), which also delivered B4's breakpoints panel. **B2 (break-on-
+> exception, uncaught path) is done** (PR #5) — `-m judb` catches a crash into
+> post-mortem and a new Exception pane surfaces it; the "break on all raised"
+> toggle is deferred (see B2). B3–B5 remain.
 
 Phase 2a gave us "something to show the world" — but only to someone sitting at a
 checkout running `make frontend` first. **Wave A makes it *reachable*** (a real
@@ -190,22 +193,40 @@ supports all of it; `_toggle_break` just hard-coded none of the options through.
   auto-clears after firing — both ws-tested; plus snap/reconnect ws tests, store
   vitest, and Playwright (popover, pane, refresh).
 
-### B2. Break-on-exception & post-mortem
+### B2. Break-on-exception & post-mortem — ✅ Done (uncaught path; PR #5)
 
-The stubs are `user_return`/`user_exception` (`debugger.py:65-75`), both `pass`.
-This is what makes the **pytest-failure** and `-m judb` "catch the crash" workflows
-real, so it's the top Wave-B item and couples with A2.
+This is what makes the **pytest-failure** and `-m judb` "catch the crash"
+workflows real. The post-mortem machinery already existed (pytest's `--pdb`
+enters `interaction(None, exc)`); this wave wired the same landing into
+`-m judb` and gave the crash a home in the UI.
 
-- Implement `user_exception` to enter `interaction()` at the raising frame, carrying
-  the traceback, with the UI flagging "paused on exception" and the console able to
-  inspect the crash's locals. Add a `post_mortem(traceback)` path for pytest/`-m`.
-- **[DECISION]** Default policy: break on *uncaught* exceptions only (like pdb
-  post-mortem), with a toggle for "break on all raised". Breaking on every `raise`
-  is noisy in scientific code full of caught exceptions.
-- Frontend: distinguish an exception-pause visually; show the exception type/message
-  in the status area; keep the traceback available as a cell-style rich output.
-- *Exit:* `pytest --pdbcls=judb:Debugger` on a failing test lands paused at the
-  assertion frame, and the console can evaluate the failing expression's operands.
+- **Backend.** `python -m judb script.py` now wraps the run: an uncaught
+  exception (anything but `SystemExit`/`KeyboardInterrupt`) is handed to a new
+  `Debugger.post_mortem(exc)`, which `reset()`s and enters `interaction(None,
+  exc)` — the browser lands on the failing frame with the crash's real locals
+  live in the console, instead of the process dying with only a terminal
+  traceback. judb's own runner frames (`_run_code` / `bdb.run`'s `exec`) are
+  trimmed off the top of the traceback (walk to the frame whose code *is* the
+  target), so the post-mortem stack starts at the debuggee's module frame. The
+  process still exits non-zero (`SystemExit(1)`) so the failure signal survives.
+  The `paused` message's `exception` now carries the full formatted `traceback`
+  (via `traceback.format_exception`) alongside `type`/`message`.
+- **Frontend.** A new **Exception** pane (rightmost on the bottom row) shows the
+  exception type, message, and traceback whenever a pause is post-mortem, and
+  stays empty otherwise. The store tracks `exception`/`postmortem` (set on
+  `paused`, cleared on resume). `ExceptionInfo` mirrored into `protocol.ts`.
+- **[DECISION] realised as *uncaught only*.** The default policy — break on
+  *uncaught* exceptions (like pdb post-mortem) — is what shipped, since breaking
+  on every `raise` is noise in scientific code full of caught exceptions. The
+  `user_exception` bdb hook stays a *no-op* (bdb only calls it while stepping, so
+  pausing there would fire on caught exceptions too). The toggle for "break on
+  all raised" is **deferred**: doing it without noise needs bdb trace-surgery
+  (keeping the local trace live through `continue` and stopping at just the raise
+  point) that isn't worth destabilising the well-tested continue path for now.
+- *Exit met:* `pytest --pdbcls=judb:Debugger` on a failing test lands paused at
+  the assertion frame and the console evaluates the failing expression's operands
+  (ws-tested); `-m judb` on a crashing script lands post-mortem on the raising
+  frame (ws-tested); plus store vitest and a Playwright exception-pane test.
 
 ### B3. Watch expressions
 

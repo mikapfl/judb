@@ -21,6 +21,7 @@ import signal
 import sys
 import threading
 import time
+import traceback
 from collections.abc import Iterable
 from types import CodeType, FrameType, TracebackType
 from typing import TYPE_CHECKING, Any
@@ -53,11 +54,12 @@ class Debugger(bdb.Bdb):
         self._quitting = False
         self._server: DebugServer | None = None
         # Post-mortem state: set when we enter `interaction` with a traceback
-        # (e.g. `pytest --pdb`) rather than a live paused frame. In that mode the
-        # program has already unwound, so stepping just leaves the debugger, and
-        # `_exc_info` (type, message) rides along on the `paused` message.
+        # (e.g. `pytest --pdb`, or `python -m judb` catching an uncaught crash)
+        # rather than a live paused frame. In that mode the program has already
+        # unwound, so stepping just leaves the debugger, and `_exc` (the failing
+        # exception) rides along on the `paused` message as type/message/traceback.
         self._is_postmortem = False
-        self._exc_info: tuple[str, str] | None = None
+        self._exc: BaseException | None = None
         # Set while paused at the outermost traced frame's return (see
         # `user_return`): the debuggee has finished, so resuming must stop
         # tracing rather than step onward into interpreter shutdown.
@@ -112,8 +114,27 @@ class Debugger(bdb.Bdb):
         frame: FrameType,
         exc_info: tuple[type[BaseException], BaseException, TracebackType],
     ) -> None:
-        # Phase 0 does not break on exceptions yet.
-        pass
+        """Called by bdb on an exception event in a frame we are tracing.
+
+        We deliberately do *not* pause here. The break-on-exception story judb
+        ships is **post-mortem on uncaught exceptions** (the DECISION in
+        docs/PHASE3_PLAN.md B2: breaking on every ``raise`` is noise in
+        scientific code full of caught exceptions). That path does not come
+        through this hook — it enters :meth:`interaction` with the traceback,
+        via :meth:`post_mortem` (``python -m judb`` catching a crash) or pytest's
+        ``--pdb``. bdb only calls this hook while *stepping*, and pausing then
+        would fire on caught exceptions too, so it stays a no-op.
+
+        A live "break on all raised" toggle would hang its logic here; it is a
+        deferred follow-up (see the plan).
+
+        Parameters
+        ----------
+        frame
+            The frame the exception is passing through.
+        exc_info
+            The ``(type, value, traceback)`` triple (unused).
+        """
 
     # --- interaction loop -------------------------------------------------
 
@@ -159,7 +180,7 @@ class Debugger(bdb.Bdb):
         target = self._frames[self._selected]
         self.current_frame = target
         self._debuggee_tid = threading.get_ident()
-        self._exc_info = (type(exc).__name__, str(exc)) if exc is not None else None
+        self._exc = exc
 
         # Guarantee there is a UI to talk to before we block on `inbound`.
         # Several entry points reach here *without* going through one that
@@ -374,10 +395,13 @@ class Debugger(bdb.Bdb):
             message["postmortem"] = True
         if self._at_exit_return:
             message["exiting"] = True
-        if self._exc_info is not None:
+        if self._exc is not None:
             message["exception"] = {
-                "type": self._exc_info[0],
-                "message": self._exc_info[1],
+                "type": type(self._exc).__name__,
+                "message": str(self._exc),
+                # The full formatted traceback, so the UI can show the crash's
+                # call chain as a rich, cell-style block (not just type/message).
+                "traceback": traceback.format_exception(self._exc),
             }
         self._emit(message)
 
@@ -816,6 +840,29 @@ class Debugger(bdb.Bdb):
         time.sleep(0.3)
 
     # --- convenience entry points ----------------------------------------
+
+    def post_mortem(self, exc: BaseException | None = None) -> None:
+        """Enter post-mortem interaction on an uncaught exception.
+
+        The program has already unwound, so this pauses at the failing frame
+        with the traceback's stack — the console can inspect the crash's locals,
+        and the UI shows the exception type/message/traceback. Any resume command
+        simply leaves the debugger. Mirrors what ``pytest --pdb`` does with our
+        class (``reset()`` then ``interaction(None, exc)``); ``python -m judb``
+        calls it when the debuggee raises past its own code.
+
+        Parameters
+        ----------
+        exc
+            The uncaught exception to inspect; defaults to the one currently
+            being handled (``sys.exception()``). A no-op if there is none.
+        """
+        if exc is None:
+            exc = sys.exception()
+        if exc is None:
+            return
+        self.reset()
+        self.interaction(None, exc)
 
     def set_trace(self, frame: FrameType | None = None) -> None:
         """Start tracing from ``frame`` (defaults to the caller's frame).

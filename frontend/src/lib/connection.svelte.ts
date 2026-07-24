@@ -6,6 +6,7 @@ import type {
   BreakpointLocation,
   Command,
   CompletionsMsg,
+  ExceptionInfo,
   FrameView,
   MimeBundle,
   MplMsg,
@@ -71,6 +72,13 @@ class Connection {
   // A transient, user-dismissable message (e.g. a rejected breakpoint). Set by
   // the store, cleared by the user or by the next successful breakpoint action.
   notice = $state<string | null>(null);
+  // The exception behind a post-mortem pause (pytest `--pdb`, or `-m judb`
+  // catching a crash), or null for an ordinary pause. Set on `paused`, retained
+  // across frame selection (same pause), cleared once the debuggee resumes.
+  exception = $state<ExceptionInfo | null>(null);
+  // Whether the current pause is post-mortem (the program has already unwound,
+  // so the resume buttons only leave the debugger — worth signalling in the UI).
+  postmortem = $state(false);
   // Lazily-fetched variable subtrees, keyed by JSON.stringify(path). Cleared
   // whenever the targeted frame changes, since locals differ per frame.
   expanded = $state<Record<string, ExpandState>>({});
@@ -327,6 +335,8 @@ class Connection {
         this.selected = msg.selected ?? this.stack.length - 1;
         this.expanded = {};
         this.allBreakpoints = msg.all_breakpoints ?? [];
+        this.exception = msg.exception ?? null;
+        this.postmortem = msg.postmortem ?? false;
         this.#showFrame(msg);
         break;
       case "frame_selected":
@@ -336,6 +346,9 @@ class Connection {
         break;
       case "running":
         this.status = "running";
+        // The pause is over; the crash banner belongs to that pause only.
+        this.exception = null;
+        this.postmortem = false;
         this.#flushCompletions();
         break;
       case "finished":

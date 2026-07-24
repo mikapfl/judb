@@ -71,6 +71,16 @@ export interface FrameView {
   breakpoints: Breakpoint[];
 }
 
+/** The exception behind a post-mortem pause, for the exception banner. */
+export interface ExceptionInfo {
+  /** The exception's class name, e.g. `"ValueError"`. */
+  type: string;
+  /** Its `str()` — the message. */
+  message: string;
+  /** The full formatted traceback lines (`traceback.format_exception`). */
+  traceback: string[];
+}
+
 export interface PausedMsg extends FrameView {
   type: "paused";
   stack: StackFrame[];
@@ -78,6 +88,13 @@ export interface PausedMsg extends FrameView {
   selected: number;
   /** Every breakpoint across all files (for the breakpoints pane). */
   all_breakpoints: BreakpointLocation[];
+  /** Set when the program has already unwound (pytest `--pdb`, `-m judb`
+   *  catching a crash): resume just leaves the debugger. */
+  postmortem?: boolean;
+  /** Set when paused at the outermost frame's return — the debuggee is done. */
+  exiting?: boolean;
+  /** Present on an exception pause: what crashed. */
+  exception?: ExceptionInfo;
 }
 
 export interface FrameSelectedMsg extends FrameView {

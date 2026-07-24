@@ -154,3 +154,65 @@ describe("breakpoint notice", () => {
     expect(conn.notice).toBeNull();
   });
 });
+
+describe("exception pane", () => {
+  beforeEach(() => {
+    FakeWS.instances = [];
+    vi.stubGlobal("WebSocket", FakeWS);
+    conn.exception = null;
+    conn.postmortem = false;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    conn.exception = null;
+    conn.postmortem = false;
+  });
+
+  const deliver = (msg: unknown) =>
+    FakeWS.instances[0].onmessage?.({ data: JSON.stringify(msg) });
+
+  const pausedBase = {
+    filename: "x.py",
+    lineno: 3,
+    function: "f",
+    locals: [],
+    source: "",
+    breakpoints: [],
+    stack: [{ filename: "x.py", lineno: 3, function: "f" }],
+    selected: 0,
+    all_breakpoints: [],
+  };
+
+  it("captures a post-mortem exception and clears it on resume", () => {
+    conn.connect();
+    FakeWS.instances[0].onopen?.();
+
+    deliver({
+      type: "paused",
+      ...pausedBase,
+      postmortem: true,
+      exception: {
+        type: "ValueError",
+        message: "kaboom",
+        traceback: ["Traceback...\n", "ValueError: kaboom\n"],
+      },
+    });
+    expect(conn.postmortem).toBe(true);
+    expect(conn.exception?.type).toBe("ValueError");
+    expect(conn.exception?.message).toBe("kaboom");
+
+    // Resuming ends the pause: the crash belongs to that pause only.
+    deliver({ type: "running" });
+    expect(conn.exception).toBeNull();
+    expect(conn.postmortem).toBe(false);
+  });
+
+  it("leaves the pane empty for an ordinary pause", () => {
+    conn.connect();
+    FakeWS.instances[0].onopen?.();
+    deliver({ type: "paused", ...pausedBase });
+    expect(conn.exception).toBeNull();
+    expect(conn.postmortem).toBe(false);
+  });
+});

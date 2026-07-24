@@ -7,6 +7,7 @@
   import VariablesPane from "./panes/VariablesPane.svelte";
   import StackPane from "./panes/StackPane.svelte";
   import BreakpointsPane from "./panes/BreakpointsPane.svelte";
+  import ExceptionPane from "./panes/ExceptionPane.svelte";
   import { conn } from "./lib/connection.svelte";
 
   $effect(() => {
@@ -57,19 +58,24 @@
     </Pane>
     <Pane size={20} minSize={10}>
       <Splitpanes theme="" class="judb-split">
-        <Pane size={25} minSize={12}>
+        <Pane size={20} minSize={10}>
           <PaneBox title="Breakpoints">
             <BreakpointsPane />
           </PaneBox>
         </Pane>
-        <Pane size={30} minSize={15}>
+        <Pane size={24} minSize={12}>
           <PaneBox title="Call stack">
             <StackPane />
           </PaneBox>
         </Pane>
-        <Pane size={45} minSize={15}>
+        <Pane size={34} minSize={15}>
           <PaneBox title="Variables">
             <VariablesPane />
+          </PaneBox>
+        </Pane>
+        <Pane size={22} minSize={10}>
+          <PaneBox title="Exception">
+            <ExceptionPane />
           </PaneBox>
         </Pane>
       </Splitpanes>

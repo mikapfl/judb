@@ -4,9 +4,12 @@ import { expect, test } from "@playwright/test";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 
-/** Launch the Python debuggee; resolve once it prints its server URL. */
-function startDebuggee(): Promise<{ proc: ChildProcessWithoutNullStreams; url: string }> {
-  const proc = spawn("uv", ["run", "python", "frontend/e2e/debuggee.py"], {
+/** Launch a Python debuggee (defaults to the live-pause fixture); resolve once
+ *  it prints its server URL. */
+function startDebuggee(
+  script = "frontend/e2e/debuggee.py",
+): Promise<{ proc: ChildProcessWithoutNullStreams; url: string }> {
+  const proc = spawn("uv", ["run", "python", script], {
     cwd: REPO_ROOT,
   });
   return new Promise((resolve, reject) => {
@@ -328,6 +331,31 @@ test("interactive matplotlib: render an in-frame plot, then zoom it", async ({ p
         timeout: 10_000,
       })
       .not.toBe(before);
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
+
+test("post-mortem: the exception pane shows the crash after continue", async ({ page }) => {
+  const { proc, url } = await startDebuggee("frontend/e2e/crash_debuggee.py");
+
+  try {
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+
+    // An ordinary pause: the exception pane is empty.
+    const pane = page.locator(".exception");
+    await expect(pane).toContainText("No exception.");
+    await expect(page.locator(".exc-tb")).toHaveCount(0);
+
+    // Continue → the debuggee crashes and the debugger re-pauses post-mortem.
+    await page.getByRole("button", { name: "Continue" }).click();
+
+    // The exception pane now names the crash and shows its traceback.
+    await expect(pane).toContainText("ValueError", { timeout: 15_000 });
+    await expect(pane).toContainText("bad rows");
+    await expect(page.locator(".exc-tb")).toContainText("ValueError: bad rows");
+    await expect(page.locator(".exc-tb")).toContainText("compute");
   } finally {
     if (proc.exitCode === null) proc.kill("SIGKILL");
   }

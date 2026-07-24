@@ -76,7 +76,11 @@ def test_postmortem_over_websocket():
         async with ClientSession() as session, session.ws_connect(ws_url(url)) as ws:
             paused = await recv_type(ws, "paused")
             assert paused.get("postmortem") is True
-            assert paused["exception"] == {"type": "ValueError", "message": "kaboom"}
+            exc = paused["exception"]
+            assert exc["type"] == "ValueError"
+            assert exc["message"] == "kaboom"
+            # The formatted traceback rides along for the UI's rich display.
+            assert any("ValueError: kaboom" in line for line in exc["traceback"])
             # Innermost (failing) frame is selected.
             assert paused["function"] == "inner"
             assert "values" in paused["locals"]
@@ -319,6 +323,76 @@ def test_python_m_judb_runs_module(tmp_path: Path):
         assert paused["function"] == "<module>"
         assert proc.wait(timeout=30) == 0
         assert "MODULE RAN ['alpha']" in "".join(lines)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+def test_python_m_judb_postmortem_on_crash(tmp_path: Path):
+    """`python -m judb crash.py` lands in post-mortem when the script raises.
+
+    Instead of dying with only a terminal traceback, an uncaught exception drops
+    the browser onto the failing frame (judb's own runner frames trimmed off the
+    top), where the console can inspect the crash's locals. The process still
+    exits non-zero so the failure signal survives.
+    """
+    script = tmp_path / "crash_demo.py"
+    script.write_text(
+        textwrap.dedent(
+            """
+            def compute(rows):
+                total = sum(rows)
+                raise ValueError("bad rows")
+
+            data = [1, 2, 3]
+            compute(data)
+            """
+        ).lstrip()
+    )
+    env = {**os.environ, "JUDB_NO_BROWSER": "1"}
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "judb", str(script)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        bufsize=1,
+    )
+    lines: list[str] = []
+    try:
+        url = read_judb_url(proc, lines)
+
+        async def flow() -> dict[str, Any]:
+            async with (
+                ClientSession() as session,
+                session.ws_connect(ws_url(url)) as ws,
+            ):
+                # First pause: stop-on-entry. Resume to let the script crash.
+                await recv_type(ws, "paused")
+                await ws.send_json({"cmd": "continue"})
+                await recv_type(ws, "running")
+                # Second pause: post-mortem on the uncaught exception.
+                crash = await recv_type(ws, "paused")
+                # The console can inspect the failing frame's real locals.
+                await ws.send_json({"cmd": "execute_cell", "code": "sum(rows)"})
+                result = await recv_type(ws, "cell_result")
+                assert result["success"]
+                texts = [o["data"].get("text/plain") for o in result["outputs"]]
+                assert "6" in texts
+                await ws.send_json({"cmd": "continue"})
+                await recv_type(ws, "running")
+                return crash
+
+        crash = asyncio.run(flow())
+        assert crash.get("postmortem") is True
+        # Selected frame is the one that raised, not judb's runner plumbing.
+        assert crash["function"] == "compute"
+        assert Path(crash["filename"]).name == "crash_demo.py"
+        assert crash["exception"]["type"] == "ValueError"
+        assert crash["exception"]["message"] == "bad rows"
+        assert "rows" in crash["locals"]
+        # Non-zero exit preserves the failure signal for the shell.
+        assert proc.wait(timeout=30) == 1
     finally:
         if proc.poll() is None:
             proc.kill()
