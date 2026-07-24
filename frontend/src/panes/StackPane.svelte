@@ -1,7 +1,8 @@
 <script lang="ts">
   import { conn } from "../lib/connection.svelte";
 
-  const base = (path: string) => path.split("/").pop() ?? path;
+  // Basename, tolerant of both POSIX and Windows separators.
+  const base = (path: string) => path.split(/[\\/]/).pop() ?? path;
 
   // Clicking a frame retargets source / variables / console to it (§7).
   // The innermost (paused) frame is the last one.

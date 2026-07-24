@@ -130,6 +130,61 @@ test("toggle a breakpoint from the source gutter", async ({ page }) => {
   }
 });
 
+test("set a conditional breakpoint from the gutter popover", async ({ page }) => {
+  const { proc, url } = await startDebuggee();
+
+  try {
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+
+    // Right-click a gutter line to open the breakpoint editor, give it a
+    // condition, and save. The marker becomes a diamond (cm-breakpoint-cond).
+    const gutterLine = page
+      .locator(".source .cm-breakpoint-gutter .cm-gutterElement:visible")
+      .first();
+    await gutterLine.click({ button: "right" });
+
+    const popover = page.locator(".source .popover");
+    await expect(popover).toBeVisible();
+    await popover.getByPlaceholder("e.g. i == 3").fill("scale == 2.0");
+    await popover.getByRole("button", { name: "Save" }).click();
+
+    await expect(popover).toBeHidden();
+    await expect(page.locator(".source .cm-breakpoint-cond")).toHaveCount(1, {
+      timeout: 10_000,
+    });
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
+
+test("the breakpoints pane lists a breakpoint and removes it", async ({ page }) => {
+  const { proc, url } = await startDebuggee();
+
+  try {
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+
+    const pane = page.locator(".breakpoints");
+    await expect(pane).toContainText("No breakpoints");
+
+    // Set a breakpoint from the gutter; the pane lists it (with its file).
+    const gutterLine = page
+      .locator(".source .cm-breakpoint-gutter .cm-gutterElement:visible")
+      .first();
+    await gutterLine.click();
+    await expect(pane.locator("li")).toHaveCount(1, { timeout: 10_000 });
+    await expect(pane).toContainText("debuggee.py");
+
+    // Remove it from the pane; both the row and the gutter dot go.
+    await pane.getByRole("button", { name: "Remove breakpoint" }).click();
+    await expect(pane).toContainText("No breakpoints", { timeout: 10_000 });
+    await expect(page.locator(".source .cm-breakpoint")).toHaveCount(0);
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
+
 test("interrupt a runaway console cell", async ({ page }) => {
   const { proc, url } = await startDebuggee();
 
@@ -312,6 +367,16 @@ test("refreshing the page while paused restores the UI", async ({ page }) => {
     await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
     await expect(page.locator(".source")).toContainText("np.linspace");
 
+    // Set a breakpoint before reloading: it must survive the refresh, in both
+    // the gutter and the breakpoints pane (regression — a reload used to drop
+    // every breakpoint, since the set arrives as a one-shot message).
+    await page
+      .locator(".source .cm-breakpoint-gutter .cm-gutterElement:visible")
+      .first()
+      .click();
+    await expect(page.locator(".source .cm-breakpoint")).toHaveCount(1, { timeout: 10_000 });
+    await expect(page.locator(".breakpoints li")).toHaveCount(1);
+
     await page.reload();
 
     // Same paused frame, repopulated from the replay.
@@ -319,6 +384,10 @@ test("refreshing the page while paused restores the UI", async ({ page }) => {
     await expect(page.locator(".source")).toContainText("np.linspace");
     await expect(page.locator(".vars")).toContainText("data");
     await expect(page.locator(".stack")).toContainText("compute");
+
+    // The breakpoint came back with the replayed state.
+    await expect(page.locator(".source .cm-breakpoint")).toHaveCount(1);
+    await expect(page.locator(".breakpoints li")).toHaveCount(1);
 
     // And it is still driveable: the console runs in the paused frame.
     const cell = page.locator(".cell .cm-content").first();

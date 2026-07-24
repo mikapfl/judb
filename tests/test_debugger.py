@@ -4,7 +4,8 @@ All over the real websocket, without a browser. Four groups:
 
 * **frames** — ``select_frame`` retargets the console + inspection to a chosen
   stack frame, plus ``expand`` and ``complete`` against the selected frame;
-* **breakpoints** — setting one from the gutter, and the error path;
+* **breakpoints** — setting one from the gutter, conditional and temporary
+  breakpoints, and the error path;
 * **interrupts** — stopping a runaway console cell;
 * **signals** — a real terminal Ctrl+C (over a pty), and re-asserting the SIGINT
   handler that libraries like polars steal at import.
@@ -246,7 +247,20 @@ def test_set_break_stops_at_a_later_line():
 
             await ws.send_json({"cmd": "set_break", "filename": fname, "line": target})
             bp = await recv_type(ws, "breakpoints")
-            assert bp["lines"] == [target]
+            # A plain breakpoint: no condition, not temporary, no ignores.
+            assert bp["breakpoints"] == [
+                {"line": target, "cond": None, "temporary": False, "ignore": 0}
+            ]
+            # The global list (for the breakpoints pane) carries the file too.
+            assert bp["all_breakpoints"] == [
+                {
+                    "filename": fname,
+                    "line": target,
+                    "cond": None,
+                    "temporary": False,
+                    "ignore": 0,
+                }
+            ]
             assert "error" not in bp
 
             # Continue: bdb keeps tracing while a breakpoint exists, so we stop.
@@ -254,14 +268,21 @@ def test_set_break_stops_at_a_later_line():
             await recv_type(ws, "running")
             paused2 = await recv_type(ws, "paused")
             assert paused2["lineno"] == target
-            assert paused2["breakpoints"] == [target]  # echoed on pause too
+            # Echoed on pause too.
+            assert [b["line"] for b in paused2["breakpoints"]] == [target]
 
-            # Clear it and run to completion.
+            # Clear it via the filename the breakpoints pane holds (from
+            # all_breakpoints), then run to completion. The reply's filename must
+            # equal paused["filename"] so the browser refreshes the shown file's
+            # gutter — the two diverged under Windows normcase, stranding the dot.
+            pane_filename = bp["all_breakpoints"][0]["filename"]
+            assert pane_filename == fname
             await ws.send_json(
-                {"cmd": "clear_break", "filename": fname, "line": target}
+                {"cmd": "clear_break", "filename": pane_filename, "line": target}
             )
             cleared = await recv_type(ws, "breakpoints")
-            assert cleared["lines"] == []
+            assert cleared["filename"] == fname
+            assert cleared["breakpoints"] == []
             await ws.send_json({"cmd": "continue"})
             await recv_type(ws, "running")
 
@@ -294,7 +315,180 @@ def test_set_break_on_nonexistent_line_reports_error():
             )
             bp = await recv_type(ws, "breakpoints")
             assert "error" in bp
-            assert bp["lines"] == []  # nothing was set
+            assert bp["breakpoints"] == []  # nothing was set
+            await ws.send_json({"cmd": "continue"})
+            await recv_type(ws, "running")
+
+    asyncio.run(flow())
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
+def test_conditional_breakpoint_fires_only_when_true():
+    """A breakpoint with ``cond`` fires only on the iteration where the
+    condition holds, skipping the earlier ones."""
+    dbg = Debugger()
+    url = dbg.start_server(open_browser=False)
+
+    def debuggee() -> None:
+        dbg.set_trace()  # first pause lands on the next line (`total = 0`)
+        total = 0
+        for i in range(5):
+            total += i  # breakpoint here, cond `i == 3`
+        _ = total
+
+    thread = threading.Thread(target=debuggee)
+    thread.start()
+
+    async def flow() -> None:
+        async with ClientSession() as session, session.ws_connect(ws_url(url)) as ws:
+            paused = await recv_type(ws, "paused")
+            fname = paused["filename"]
+            target = paused["lineno"] + 2  # the `total += i` line
+
+            await ws.send_json(
+                {
+                    "cmd": "set_break",
+                    "filename": fname,
+                    "line": target,
+                    "cond": "i == 3",
+                }
+            )
+            bp = await recv_type(ws, "breakpoints")
+            assert bp["breakpoints"] == [
+                {"line": target, "cond": "i == 3", "temporary": False, "ignore": 0}
+            ]
+
+            # Continue: bdb evaluates the condition and skips i=0,1,2, stopping at 3.
+            await ws.send_json({"cmd": "continue"})
+            await recv_type(ws, "running")
+            paused2 = await recv_type(ws, "paused")
+            assert paused2["lineno"] == target
+            await ws.send_json({"cmd": "execute_cell", "code": "i"})
+            r = await recv_type(ws, "cell_result")
+            assert any(
+                o["data"].get("text/plain", "").strip() == "3" for o in r["outputs"]
+            )
+
+            # Clear and finish.
+            await ws.send_json(
+                {"cmd": "clear_break", "filename": fname, "line": target}
+            )
+            await recv_type(ws, "breakpoints")
+            await ws.send_json({"cmd": "continue"})
+            await recv_type(ws, "running")
+
+    asyncio.run(flow())
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
+def test_temporary_breakpoint_clears_after_firing():
+    """A ``temporary`` breakpoint fires once and then auto-clears, so a second
+    ``continue`` runs to completion instead of stopping again."""
+    dbg = Debugger()
+    url = dbg.start_server(open_browser=False)
+
+    def debuggee() -> None:
+        dbg.set_trace()  # first pause lands on the next line (`total = 0`)
+        total = 0
+        for _i in range(3):
+            total += 1  # temporary breakpoint here
+        _ = total
+
+    thread = threading.Thread(target=debuggee)
+    thread.start()
+
+    async def flow() -> None:
+        async with ClientSession() as session, session.ws_connect(ws_url(url)) as ws:
+            paused = await recv_type(ws, "paused")
+            fname = paused["filename"]
+            target = paused["lineno"] + 2  # the `total += 1` line
+
+            await ws.send_json(
+                {
+                    "cmd": "set_break",
+                    "filename": fname,
+                    "line": target,
+                    "temporary": True,
+                }
+            )
+            bp = await recv_type(ws, "breakpoints")
+            assert bp["breakpoints"] == [
+                {"line": target, "cond": None, "temporary": True, "ignore": 0}
+            ]
+
+            # First continue stops at the breakpoint...
+            await ws.send_json({"cmd": "continue"})
+            await recv_type(ws, "running")
+            paused2 = await recv_type(ws, "paused")
+            assert paused2["lineno"] == target
+            # ...and it has cleared itself, so the file now has no breakpoints.
+            assert paused2["breakpoints"] == []
+
+            # Second continue runs to completion (no re-pause on the loop).
+            await ws.send_json({"cmd": "continue"})
+            await recv_type(ws, "running")
+
+    asyncio.run(flow())
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
+def test_executable_lines_and_snapping(tmp_path: Path):
+    """A breakpoint snaps forward off a blank/comment line to the next statement.
+
+    Blank and comment-only lines carry no code, so bdb would record a dead
+    breakpoint there. ``_first_breakable_line`` moves it to the next executable
+    line, or returns ``None`` when the click is past the last statement.
+    """
+    src = tmp_path / "sample.py"
+    src.write_text("x = 1\n\n# comment\ny = 2\n\n")  # statements on lines 1 and 4
+
+    dbg = Debugger()
+    assert dbg._executable_lines(str(src)) == {1, 4}
+    assert dbg._first_breakable_line(str(src), 1) == 1  # a statement stays put
+    assert dbg._first_breakable_line(str(src), 2) == 4  # blank → next statement
+    assert dbg._first_breakable_line(str(src), 3) == 4  # comment → next statement
+    assert dbg._first_breakable_line(str(src), 5) is None  # nothing left to break on
+
+
+def test_set_break_on_blank_line_snaps_to_next_statement():
+    """Clicking a comment line in the gutter sets the breakpoint on the next
+    real statement instead, and reports no error."""
+    dbg = Debugger()
+    url = dbg.start_server(open_browser=False)
+
+    def debuggee() -> None:
+        dbg.set_trace()  # first pause lands on the next line (`a = 1`)
+        a = 1
+        # a comment — no statement on this line
+        b = 2
+        _ = (a, b)
+
+    thread = threading.Thread(target=debuggee)
+    thread.start()
+
+    async def flow() -> None:
+        async with ClientSession() as session, session.ws_connect(ws_url(url)) as ws:
+            paused = await recv_type(ws, "paused")
+            fname = paused["filename"]
+            comment_line = paused["lineno"] + 1  # the comment
+            statement_line = paused["lineno"] + 2  # `b = 2`
+
+            await ws.send_json(
+                {"cmd": "set_break", "filename": fname, "line": comment_line}
+            )
+            bp = await recv_type(ws, "breakpoints")
+            assert "error" not in bp
+            # Snapped forward to the next executable line.
+            assert [b["line"] for b in bp["breakpoints"]] == [statement_line]
+
+            # Clear (at the snapped line) and finish so the thread completes.
+            await ws.send_json(
+                {"cmd": "clear_break", "filename": fname, "line": statement_line}
+            )
+            await recv_type(ws, "breakpoints")
             await ws.send_json({"cmd": "continue"})
             await recv_type(ws, "running")
 

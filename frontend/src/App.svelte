@@ -6,6 +6,7 @@
   import ConsolePane from "./panes/ConsolePane.svelte";
   import VariablesPane from "./panes/VariablesPane.svelte";
   import StackPane from "./panes/StackPane.svelte";
+  import BreakpointsPane from "./panes/BreakpointsPane.svelte";
   import { conn } from "./lib/connection.svelte";
 
   $effect(() => {
@@ -21,6 +22,20 @@
 </script>
 
 <Toolbar />
+
+<!-- A transient, dismissable notice (e.g. a breakpoint that could not be set). -->
+{#if conn.notice}
+  <div class="notice" role="alert">
+    <span class="notice-text">{conn.notice}</span>
+    <button
+      class="notice-dismiss"
+      aria-label="Dismiss notice"
+      onclick={() => (conn.notice = null)}
+    >
+      ×
+    </button>
+  </div>
+{/if}
 
 <main>
   <!-- Primary divider is top/bottom: the working area (Source + Console) gets
@@ -42,12 +57,17 @@
     </Pane>
     <Pane size={20} minSize={10}>
       <Splitpanes theme="" class="judb-split">
-        <Pane size={45} minSize={15}>
+        <Pane size={25} minSize={12}>
+          <PaneBox title="Breakpoints">
+            <BreakpointsPane />
+          </PaneBox>
+        </Pane>
+        <Pane size={30} minSize={15}>
           <PaneBox title="Call stack">
             <StackPane />
           </PaneBox>
         </Pane>
-        <Pane size={55} minSize={15}>
+        <Pane size={45} minSize={15}>
           <PaneBox title="Variables">
             <VariablesPane />
           </PaneBox>
@@ -84,6 +104,35 @@
   main {
     flex: 1;
     min-height: 0;
+  }
+  /* Dismissable notice bar under the toolbar (breakpoint rejections, etc.). */
+  .notice {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.4rem 0.75rem;
+    background: var(--warn-bg);
+    color: var(--warn-fg);
+    border-bottom: 1px solid var(--warn-fg);
+    font-size: 0.85rem;
+  }
+  .notice-text {
+    flex: 1;
+    min-width: 0;
+  }
+  .notice-dismiss {
+    flex: none;
+    padding: 0 0.4rem;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: 3px;
+  }
+  .notice-dismiss:hover {
+    background: rgba(0, 0, 0, 0.15);
   }
   /* Dark splitter styling (we opted out of the default light theme). */
   main :global(.splitpanes.judb-split) {

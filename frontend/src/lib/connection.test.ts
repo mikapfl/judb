@@ -114,3 +114,43 @@ describe("reconnect", () => {
     expect(conn.status).toBe("finished");
   });
 });
+
+describe("breakpoint notice", () => {
+  beforeEach(() => {
+    FakeWS.instances = [];
+    vi.stubGlobal("WebSocket", FakeWS);
+    conn.notice = null;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    conn.notice = null;
+  });
+
+  const deliver = (msg: unknown) =>
+    FakeWS.instances[0].onmessage?.({ data: JSON.stringify(msg) });
+
+  it("surfaces a rejected breakpoint, then clears it on the next success", () => {
+    conn.connect();
+    FakeWS.instances[0].onopen?.();
+
+    // A breakpoints reply carrying an error becomes a dismissable notice.
+    deliver({
+      type: "breakpoints",
+      filename: "x.py",
+      breakpoints: [],
+      all_breakpoints: [],
+      error: "No statement to break on at or after line 9.",
+    });
+    expect(conn.notice).toContain("No statement");
+
+    // A subsequent successful set/clear clears the notice.
+    deliver({
+      type: "breakpoints",
+      filename: "x.py",
+      breakpoints: [{ line: 4 }],
+      all_breakpoints: [{ filename: "x.py", line: 4 }],
+    });
+    expect(conn.notice).toBeNull();
+  });
+});

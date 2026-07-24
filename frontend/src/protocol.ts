@@ -41,6 +41,25 @@ export interface VarChild {
 
 // --- server -> client ---------------------------------------------------
 
+/** A breakpoint in the source file, with its bdb options. Mirrors
+ *  debugger.py's `_file_breaks` records. */
+export interface Breakpoint {
+  /** 1-based line number. */
+  line: number;
+  /** Condition expression that must be truthy to fire, or null/absent. */
+  cond?: string | null;
+  /** Whether the breakpoint clears itself after firing once. */
+  temporary?: boolean;
+  /** Remaining hits to skip before firing (0 = fire immediately). */
+  ignore?: number;
+}
+
+/** A breakpoint plus the file it lives in — for the global breakpoints pane,
+ *  which spans every file, not just the currently-shown one. */
+export interface BreakpointLocation extends Breakpoint {
+  filename: string;
+}
+
 /** Per-frame fields shared by `paused` and `frame_selected`. */
 export interface FrameView {
   filename: string;
@@ -48,8 +67,8 @@ export interface FrameView {
   function: string;
   locals: string[];
   source: string;
-  /** 1-based line numbers with a breakpoint set in this frame's file. */
-  breakpoints: number[];
+  /** Breakpoints set in this frame's file. */
+  breakpoints: Breakpoint[];
 }
 
 export interface PausedMsg extends FrameView {
@@ -57,6 +76,8 @@ export interface PausedMsg extends FrameView {
   stack: StackFrame[];
   /** Index into `stack` of the initially-targeted (innermost) frame. */
   selected: number;
+  /** Every breakpoint across all files (for the breakpoints pane). */
+  all_breakpoints: BreakpointLocation[];
 }
 
 export interface FrameSelectedMsg extends FrameView {
@@ -101,12 +122,14 @@ export interface CompletionsMsg {
   matches: string[];
 }
 
-/** Reply to `set_break`/`clear_break`: the file's remaining breakpoint lines
+/** Reply to `set_break`/`clear_break`: the file's remaining breakpoints
  *  (so the gutter can redraw), plus `error` if bdb rejected the line. */
 export interface BreakpointsMsg {
   type: "breakpoints";
   filename: string;
-  lines: number[];
+  breakpoints: Breakpoint[];
+  /** Every breakpoint across all files (for the breakpoints pane). */
+  all_breakpoints: BreakpointLocation[];
   error?: string;
 }
 
@@ -152,7 +175,14 @@ export type Command =
   | { cmd: "select_frame"; index: number }
   | { cmd: "expand"; path: VarPath }
   | { cmd: "complete"; code: string; cursor: number }
-  | { cmd: "set_break"; filename: string; line: number }
+  | {
+      cmd: "set_break";
+      filename: string;
+      line: number;
+      cond?: string | null;
+      temporary?: boolean;
+      ignore?: number;
+    }
   | { cmd: "clear_break"; filename: string; line: number }
   | { cmd: "mpl_event"; id: string; content: unknown }
   | { cmd: "mpl_download"; id: string; format: string }

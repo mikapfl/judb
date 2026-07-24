@@ -127,11 +127,41 @@ class DebugServer:
         assert self._loop is not None and self._out_q is not None
         while True:
             msg = self.dbg.outbound.get()
-            if msg.get("type") in _STATE_TYPES:
+            msg_type = msg.get("type")
+            if msg_type in _STATE_TYPES:
                 # Remember it for a reconnecting browser. Rebinding a reference
                 # is atomic, so the event-loop thread reads it without a lock.
                 self._last_state = msg
+            elif msg_type == "breakpoints":
+                # A breakpoint set/cleared *after* the pause: the `breakpoints`
+                # message is one-shot (not replayed), so fold it into the cached
+                # paused snapshot, or a reconnecting browser gets the stale,
+                # empty breakpoint set. Rebind a fresh dict (don't mutate in
+                # place) to keep the event-loop thread's lock-free read atomic.
+                self._fold_breakpoints(msg)
             self._loop.call_soon_threadsafe(self._out_q.put_nowait, msg)
+
+    def _fold_breakpoints(self, msg: dict[str, Any]) -> None:
+        """Update the cached paused snapshot with a ``breakpoints`` message.
+
+        Keeps a reconnecting browser's gutter and breakpoints pane in sync with
+        breakpoints set/cleared since the pause. The global list
+        (``all_breakpoints``) always refreshes; the paused frame's per-file
+        gutter list only when the change is in that same file.
+
+        Parameters
+        ----------
+        msg
+            The ``breakpoints`` message flowing out to the browser.
+        """
+        last = self._last_state
+        if last is None or last.get("type") != "paused":
+            return
+        patched = dict(last)
+        patched["all_breakpoints"] = msg.get("all_breakpoints", [])
+        if msg.get("filename") == patched.get("filename"):
+            patched["breakpoints"] = msg.get("breakpoints", [])
+        self._last_state = patched
 
     # --- request handlers -------------------------------------------------
 

@@ -20,6 +20,7 @@ import {
   startCompletion,
   type CompletionSource,
 } from "@codemirror/autocomplete";
+import type { Breakpoint } from "../protocol";
 
 /** Editor chrome, driven entirely by tokens.css custom properties so the source
  *  and console editors follow the light/dark theme without being rebuilt.
@@ -45,11 +46,13 @@ export const judbTheme = EditorView.theme({
   ".cm-current-line": { backgroundColor: "var(--accent-bg)" },
   ".cm-scroller": { fontFamily: "var(--font-mono)" },
   "&.cm-focused": { outline: "none" },
-  // Clickable gutter: a red dot marks a set breakpoint; every other line has a
-  // transparent slot that reveals a faint dot on hover, inviting a click.
+  // Clickable gutter: a red dot marks a set breakpoint (a diamond if it carries
+  // a condition/temporary/ignore option); every other line has a transparent
+  // slot that reveals a faint dot on hover, inviting a click.
   ".cm-breakpoint-gutter": { width: "1.1em", cursor: "pointer" },
   ".cm-breakpoint-gutter .cm-gutterElement": { paddingLeft: "0.15em" },
   ".cm-breakpoint": { color: "var(--err-fg, #e06c75)" },
+  ".cm-breakpoint-cond": { color: "var(--warn-fg, #d19a66)" },
   ".cm-breakpoint-slot": { color: "transparent" },
   ".cm-breakpoint-gutter .cm-gutterElement:hover .cm-breakpoint-slot": {
     color: "var(--err-fg, #e06c75)",
@@ -127,11 +130,11 @@ export const currentLineField = StateField.define<DecorationSet>({
 
 // --- breakpoint gutter (source pane) ------------------------------------
 
-/** Replace the set of breakpoint lines (1-based) shown in the gutter. */
-export const setBreakpoints = StateEffect.define<number[]>();
+/** Replace the set of breakpoints shown in the gutter. */
+export const setBreakpoints = StateEffect.define<Breakpoint[]>();
 
-/** The current breakpoint lines, updated by `setBreakpoints`. */
-const breakpointLines = StateField.define<number[]>({
+/** The current breakpoints, updated by `setBreakpoints`. */
+const breakpointState = StateField.define<Breakpoint[]>({
   create() {
     return [];
   },
@@ -141,35 +144,64 @@ const breakpointLines = StateField.define<number[]>({
   },
 });
 
-function dotMarker(cls: string): GutterMarker {
+/** A breakpoint carrying a condition, ignore-count, or temporary flag — shown
+ *  distinctly from a plain one (a diamond + tooltip, not a bare dot). */
+function isConditional(bp: Breakpoint): boolean {
+  return Boolean(bp.cond) || Boolean(bp.temporary) || (bp.ignore ?? 0) > 0;
+}
+
+/** Human-readable summary of a breakpoint's options, for the marker tooltip. */
+function breakpointTitle(bp: Breakpoint): string {
+  const parts: string[] = [];
+  if (bp.cond) parts.push(`if ${bp.cond}`);
+  if (bp.temporary) parts.push("temporary");
+  if (bp.ignore) parts.push(`ignore ${bp.ignore}`);
+  return parts.length ? `Breakpoint (${parts.join(", ")})` : "Breakpoint";
+}
+
+function markerFor(bp: Breakpoint | undefined): GutterMarker {
   return new (class extends GutterMarker {
     toDOM() {
       const span = document.createElement("span");
-      span.className = cls;
-      span.textContent = "●";
+      if (!bp) {
+        // A transparent slot on every non-breakpoint line so the whole gutter
+        // column is clickable (and hints on hover — see the theme).
+        span.className = "cm-breakpoint-slot";
+        span.textContent = "●";
+      } else if (isConditional(bp)) {
+        span.className = "cm-breakpoint cm-breakpoint-cond";
+        span.textContent = "◆";
+        span.title = breakpointTitle(bp);
+      } else {
+        span.className = "cm-breakpoint";
+        span.textContent = "●";
+        span.title = breakpointTitle(bp);
+      }
       return span;
     }
   })();
 }
 
-// A red dot on a set breakpoint; a transparent slot on every other line so the
-// whole gutter column is clickable (and hints on hover — see the theme).
-const breakpointMarker = dotMarker("cm-breakpoint");
-const breakpointSlot = dotMarker("cm-breakpoint-slot");
+const breakpointSlot = markerFor(undefined);
 
-/** Clickable breakpoint gutter; a click toggles the line via `onToggle`. */
+/**
+ * Clickable breakpoint gutter.
+ *
+ * A left click toggles the line via `onToggle`. Right-clicking a line to edit
+ * its condition is handled by the source pane (a `contextmenu` listener that can
+ * both open the editor and cancel the native menu — see SourcePane), so the
+ * gutter itself only needs the plain toggle.
+ */
 function breakpointGutter(onToggle: (line: number) => void) {
   return [
-    breakpointLines,
+    breakpointState,
     gutter({
       class: "cm-breakpoint-gutter",
       // A marker on *every* line (breakpoint or a transparent slot) keeps each
       // gutter cell wide enough to click — empty cells collapse to zero width.
       lineMarker(view, block) {
         const n = view.state.doc.lineAt(block.from).number;
-        return view.state.field(breakpointLines).includes(n)
-          ? breakpointMarker
-          : breakpointSlot;
+        return markerFor(view.state.field(breakpointState).find((b) => b.line === n));
       },
       lineMarkerChange: (update) =>
         update.transactions.some((tr) =>
@@ -177,7 +209,10 @@ function breakpointGutter(onToggle: (line: number) => void) {
         ),
       initialSpacer: () => breakpointSlot,
       domEventHandlers: {
-        mousedown(view, block) {
+        mousedown(view, block, event) {
+          // Left click only — a right click is the condition editor (handled in
+          // the source pane so it can also cancel the native context menu).
+          if ((event as MouseEvent).button !== 0) return false;
           onToggle(view.state.doc.lineAt(block.from).number);
           return true;
         },
@@ -189,8 +224,9 @@ function breakpointGutter(onToggle: (line: number) => void) {
 /**
  * Read-only source view: line numbers, Python highlight, current-line field.
  *
- * Pass `onToggleBreakpoint` to add a clickable breakpoint gutter; feed its
- * dots with `setBreakpoints` effects.
+ * Pass `onToggleBreakpoint` to add a clickable breakpoint gutter (a left click
+ * toggles a plain breakpoint); feed its dots with `setBreakpoints` effects. The
+ * condition editor (right click) is wired up by the source pane, not here.
  */
 export function sourceExtensions(onToggleBreakpoint?: (line: number) => void) {
   return [

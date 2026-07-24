@@ -117,6 +117,61 @@ def test_reconnect_replays_current_state():
     assert not thread.is_alive()
 
 
+def test_reconnect_restores_breakpoints():
+    """Breakpoints set after the pause survive a browser refresh.
+
+    A breakpoint arrives at the browser as a one-shot ``breakpoints`` message,
+    which the reconnect replay would otherwise skip — so the server folds it
+    into the cached paused snapshot. Regression: a refresh used to clear every
+    breakpoint from the gutter and the breakpoints pane.
+    """
+    dbg = Debugger()
+    url = dbg.start_server(open_browser=False)
+
+    def debuggee() -> None:
+        dbg.set_trace()  # first pause lands on the next line (`a = 1`)
+        a = 1
+        b = 2
+        _ = (a, b)
+
+    thread = threading.Thread(target=debuggee)
+    thread.start()
+
+    async def flow() -> None:
+        async with ClientSession() as session:
+            async with session.ws_connect(ws_url(url)) as ws:
+                paused = await recv_type(ws, "paused")
+                assert paused["all_breakpoints"] == []  # none set yet
+                fname = paused["filename"]
+                target = paused["lineno"] + 1  # `b = 2`
+                await ws.send_json(
+                    {"cmd": "set_break", "filename": fname, "line": target}
+                )
+                bp = await recv_type(ws, "breakpoints")
+                assert [b["line"] for b in bp["all_breakpoints"]] == [target]
+
+            # Reconnect: the replayed paused carries the breakpoint in both the
+            # gutter (per-file) and the pane (global) lists.
+            async with session.ws_connect(ws_url(url)) as ws:
+                again = await recv_type(ws, "paused")
+                assert [b["line"] for b in again["breakpoints"]] == [target]
+                assert [b["line"] for b in again["all_breakpoints"]] == [target]
+
+                # Clear it before continuing: bdb keeps a breakpoint across
+                # `continue`, so leaving it set would re-pause the debuggee at
+                # `b = 2` and the non-daemon thread would never finish.
+                await ws.send_json(
+                    {"cmd": "clear_break", "filename": fname, "line": target}
+                )
+                await recv_type(ws, "breakpoints")
+                await ws.send_json({"cmd": "continue"})
+                await recv_type(ws, "running")
+
+    asyncio.run(flow())
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
 def test_forked_child_gets_its_own_server(tmp_path: Path):
     """A forked child must not inherit the parent's thread-less server.
 
