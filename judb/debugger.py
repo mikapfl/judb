@@ -91,6 +91,13 @@ class Debugger(bdb.Bdb):
 
         Every *other* return stays silent, so ``step``/``next``/``return`` keep
         their current semantics.
+
+        Parameters
+        ----------
+        frame
+            The frame that is returning.
+        return_value
+            The value it is returning (unused; part of the bdb hook signature).
         """
         if frame is not self.botframe:
             return
@@ -125,6 +132,14 @@ class Debugger(bdb.Bdb):
           calls it after a failure (on 3.13 it passes the *exception*, older
           Pythons a traceback). The stack comes from the traceback chain, and
           the program has already unwound, so stepping only leaves the debugger.
+
+        Parameters
+        ----------
+        frame
+            The paused frame for a live pause, or ``None`` for post-mortem.
+        tb_or_exc
+            For post-mortem, the failing exception (Python 3.13+) or its
+            traceback (older Pythons); ``None`` for a live pause.
         """
         exc: BaseException | None = None
         tb: TracebackType | None = None
@@ -176,7 +191,21 @@ class Debugger(bdb.Bdb):
                 continue
 
     def _handle(self, frame: FrameType, msg: dict[str, Any]) -> bool:
-        """Process one inbound command. Returns True to leave the loop (resume)."""
+        """Process one inbound command.
+
+        Parameters
+        ----------
+        frame
+            The paused frame the resume commands (``step``/``next``/``return``)
+            act on.
+        msg
+            The decoded command, with a ``"cmd"`` key and command-specific fields.
+
+        Returns
+        -------
+        ``True`` to leave the interaction loop (resume the debuggee), ``False``
+        to keep waiting for the next command.
+        """
         cmd = msg.get("cmd")
 
         if cmd == "execute_cell":
@@ -345,7 +374,14 @@ class Debugger(bdb.Bdb):
         self._emit(message)
 
     def _select_frame(self, index: object) -> None:
-        """Retarget console + inspection to stack frame ``index`` (0 = outermost)."""
+        """Retarget console + inspection to stack frame ``index`` (0 = outermost).
+
+        Parameters
+        ----------
+        index
+            The stack index to select; an invalid value emits an ``error``
+            message and leaves the selection unchanged.
+        """
         if not isinstance(index, int) or not (0 <= index < len(self._frames)):
             self._emit({"type": "error", "message": f"bad frame index: {index!r}"})
             return
@@ -359,7 +395,15 @@ class Debugger(bdb.Bdb):
         )
 
     def _complete(self, code: object, cursor: object) -> None:
-        """Tab-completion for a console cell, run against the *selected* frame."""
+        """Tab-completion for a console cell, run against the *selected* frame.
+
+        Parameters
+        ----------
+        code
+            The full cell source being completed.
+        cursor
+            The absolute offset into ``code`` at which to complete.
+        """
         if not isinstance(code, str) or not isinstance(cursor, int):
             self._emit({"type": "error", "message": "bad complete request"})
             return
@@ -374,7 +418,14 @@ class Debugger(bdb.Bdb):
         )
 
     def _expand(self, path: object) -> None:
-        """Lazily resolve a variable ``path`` in the selected frame (see Console)."""
+        """Lazily resolve a variable ``path`` in the selected frame (see Console).
+
+        Parameters
+        ----------
+        path
+            The ``[kind, key]`` step list to resolve (see :meth:`Console.inspect`);
+            a non-list emits an ``error`` message.
+        """
         if not isinstance(path, list):
             self._emit({"type": "error", "message": f"bad expand path: {path!r}"})
             return
@@ -400,6 +451,15 @@ class Debugger(bdb.Bdb):
         exists, so a breakpoint set while paused fires on the next ``continue``.
         Runs on the debuggee thread (like ``expand``), so touching ``self.breaks``
         is race-free.
+
+        Parameters
+        ----------
+        cmd
+            ``"set_break"`` or ``"clear_break"``.
+        filename
+            The source file to toggle the breakpoint in.
+        line
+            The 1-based line number.
         """
         if not isinstance(filename, str) or not isinstance(line, int):
             self._emit({"type": "error", "message": "bad breakpoint request"})
@@ -420,7 +480,18 @@ class Debugger(bdb.Bdb):
         self._emit(message)
 
     def _frame_view(self, frame: FrameType) -> dict[str, Any]:
-        """The per-frame fields shared by ``paused`` and ``frame_selected``."""
+        """The per-frame fields shared by ``paused`` and ``frame_selected``.
+
+        Parameters
+        ----------
+        frame
+            The frame to summarise.
+
+        Returns
+        -------
+        The frame's filename, line number, function name, sorted local names,
+        full source, and breakpoint lines.
+        """
         return {
             "filename": frame.f_code.co_filename,
             "lineno": frame.f_lineno,
@@ -444,7 +515,17 @@ class Debugger(bdb.Bdb):
 
     @staticmethod
     def _frames_of(frame: FrameType | None) -> list[FrameType]:
-        """The call stack as frame objects, outermost-first."""
+        """The call stack as frame objects, outermost-first.
+
+        Parameters
+        ----------
+        frame
+            The innermost frame; the stack is its ``f_back`` chain.
+
+        Returns
+        -------
+        The frames from outermost to innermost.
+        """
         frames: list[FrameType] = []
         while frame is not None:
             frames.append(frame)
@@ -459,6 +540,15 @@ class Debugger(bdb.Bdb):
         A traceback runs outermost→innermost (``tb_next`` goes deeper toward the
         ``raise``), so this matches ``_frames_of``'s ordering and leaves the
         failing frame last — where post-mortem selection starts.
+
+        Parameters
+        ----------
+        tb
+            The head of the traceback chain.
+
+        Returns
+        -------
+        The frames from outermost to innermost (the failing frame last).
         """
         frames: list[FrameType] = []
         cur: TracebackType | None = tb
@@ -492,6 +582,16 @@ class Debugger(bdb.Bdb):
         Setting ``JUDB_NO_BROWSER`` in the environment suppresses the browser
         tab regardless of ``open_browser`` (handy for headless boxes, CI, and
         driving pytest's ``--pdb`` entry point from a test).
+
+        Parameters
+        ----------
+        open_browser
+            Whether to open a browser tab on first start. Overridden to off by
+            the ``JUDB_NO_BROWSER`` environment variable.
+
+        Returns
+        -------
+        The tokenized URL of the debugger UI.
         """
         if self._server is not None and self._server.pid == os.getpid():
             return self._server.url
@@ -524,7 +624,13 @@ class Debugger(bdb.Bdb):
     # --- convenience entry points ----------------------------------------
 
     def set_trace(self, frame: FrameType | None = None) -> None:
-        """Start tracing from ``frame`` (defaults to the caller's frame)."""
+        """Start tracing from ``frame`` (defaults to the caller's frame).
+
+        Parameters
+        ----------
+        frame
+            The frame to start tracing from; defaults to the caller's frame.
+        """
         if frame is None:
             frame = sys._getframe().f_back
         super().set_trace(frame)

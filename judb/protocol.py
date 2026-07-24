@@ -14,9 +14,17 @@ from typing import Any
 class Output:
     """A single rich output, mirroring a Jupyter output message.
 
-    ``kind`` is one of ``"execute_result"`` (value of the last expression),
-    ``"display_data"`` (an explicit ``display(...)`` or a flushed matplotlib
-    figure), ``"stream"`` (stdout/stderr text), or ``"error"`` (a traceback).
+    Attributes
+    ----------
+    kind
+        One of ``"execute_result"`` (value of the last expression),
+        ``"display_data"`` (an explicit ``display(...)`` or a flushed matplotlib
+        figure), ``"stream"`` (stdout/stderr text), or ``"error"`` (a traceback).
+    data
+        The output payload: a mime bundle (mime type → value) for result/display
+        outputs, or the stream/error fields for those kinds.
+    metadata
+        Optional per-output metadata, mirroring Jupyter's ``metadata`` dict.
     """
 
     kind: str
@@ -36,7 +44,14 @@ class Output:
         )
 
     def mime_types(self) -> list[str]:
-        """The mime types carried by a result/display output (for introspection)."""
+        """The mime types carried by a result/display output.
+
+        Returns
+        -------
+        The sorted mime types for an ``execute_result`` / ``display_data``
+        output, or an empty list for stream/error outputs. Useful for
+        introspection.
+        """
         if self.kind in ("execute_result", "display_data"):
             return sorted(self.data)
         return []
@@ -44,13 +59,32 @@ class Output:
 
 @dataclass
 class CellResult:
-    """The full result of executing one console cell."""
+    """The full result of executing one console cell.
+
+    Attributes
+    ----------
+    outputs
+        The rich outputs the cell produced, in reading order.
+    success
+        Whether the cell ran without raising.
+    """
 
     outputs: list[Output] = field(default_factory=list)
     success: bool = True
 
     def first_of(self, mime: str) -> Any | None:  # noqa: ANN401
-        """Return the first output's payload for ``mime``, or ``None``."""
+        """Return the first output's payload for ``mime``, or ``None``.
+
+        Parameters
+        ----------
+        mime
+            The mime type to look up (e.g. ``"text/plain"``, ``"image/png"``).
+
+        Returns
+        -------
+        The payload of the first output carrying ``mime``, or ``None`` if no
+        output has it.
+        """
         for out in self.outputs:
             if mime in out.data:
                 return out.data[mime]

@@ -75,7 +75,12 @@ class DebugServer:
         return f"http://{self.host}:{self.port}/?token={self.token}"
 
     def start(self) -> str:
-        """Start the server thread and block until it is listening."""
+        """Start the server thread and block until it is listening.
+
+        Returns
+        -------
+        The tokenized URL clients connect to.
+        """
         threading.Thread(target=self._run, name="judb-server", daemon=True).start()
         self._ready.wait()
         return self.url
@@ -150,7 +155,17 @@ class DebugServer:
     async def _handle_mpl_js(self, request: web.Request) -> web.Response:
         """Serve *this* matplotlib's WebAgg client JS, so the interactive-figure
         client always matches the installed backend (see mpl_backend.py). Only
-        loaded on demand, when the first interactive figure appears."""
+        loaded on demand, when the first interactive figure appears.
+
+        Parameters
+        ----------
+        request
+            The incoming request; must carry the URL token.
+
+        Returns
+        -------
+        The WebAgg client JavaScript as an ``application/javascript`` response.
+        """
         self._check_token(request)
         from matplotlib.backends.backend_webagg_core import FigureManagerWebAgg
 

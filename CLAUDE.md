@@ -196,4 +196,11 @@ debuggee and (eventually) the web server:
   inline `# noqa: ANN401`.
 - ruff runs with `extend-select = ["ANN", "PYI"]` and `preview = true`; `ANN201`
   is disabled for `tests/**` only.
+- Docstrings use **numpydoc** format (our users/devs are data-science people), with
+  one deliberate departure: **no types in the docstring** — `Parameters`/`Returns`/
+  `Attributes` entries are just `name` + description, since the real type
+  annotations already carry them (don't restate them). Keep the rich prose as the
+  extended summary; pure one-line summaries and undocumented helpers stay as-is
+  (both valid numpydoc). RST cross-refs (`` :class:`Console` ``, `` :meth:`run_cell` ``)
+  are fine.
 - Since the end of Phase 2a, we're now working in a feature branch workflow.

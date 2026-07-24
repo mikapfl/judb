@@ -32,8 +32,12 @@ _USAGE = "usage: python -m judb [-m module | script.py] [args...]"
 def main(argv: list[str] | None = None) -> None:
     """Entry point for ``python -m judb``.
 
-    ``argv`` defaults to ``sys.argv[1:]``: either ``script.py [args]`` or
-    ``-m module [args]``, where the trailing arguments belong to the target.
+    Parameters
+    ----------
+    argv
+        The command-line arguments, defaulting to ``sys.argv[1:]``: either
+        ``script.py [args]`` or ``-m module [args]``, where the trailing
+        arguments belong to the target.
     """
     args = list(sys.argv[1:] if argv is None else argv)
 
@@ -64,7 +68,17 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def _run_script(script: Path, args: list[str], *, open_browser: bool = True) -> None:
-    """Run ``script`` under a fresh :class:`Debugger`, stopping on entry."""
+    """Run ``script`` under a fresh :class:`Debugger`, stopping on entry.
+
+    Parameters
+    ----------
+    script
+        Path to the script to run.
+    args
+        The target's own command-line arguments (``sys.argv[1:]`` for it).
+    open_browser
+        Whether to open a browser tab on start.
+    """
     script_path = str(script)
     with io.open_code(script_path) as fp:
         code = compile(fp.read(), script_path, "exec")
@@ -83,7 +97,17 @@ def _run_script(script: Path, args: list[str], *, open_browser: bool = True) -> 
 
 
 def _run_module(module: str, args: list[str], *, open_browser: bool = True) -> None:
-    """Run ``module`` as ``__main__`` under a fresh :class:`Debugger`."""
+    """Run ``module`` as ``__main__`` under a fresh :class:`Debugger`.
+
+    Parameters
+    ----------
+    module
+        The importable module name to run (``python -m judb -m module``).
+    args
+        The target's own command-line arguments.
+    open_browser
+        Whether to open a browser tab on start.
+    """
     import runpy
 
     # `runpy._get_module_details` is private, but it is exactly what `pdb -m`
@@ -123,6 +147,20 @@ def _run_code(
     Factored out of the script/module paths (and so tests can drive it with
     ``open_browser=False``). The debuggee sees the arguments as if it had been
     invoked directly, in a namespace that does not inherit judb's globals.
+
+    Parameters
+    ----------
+    code
+        The resolved code object to execute as ``__main__``.
+    sys_path_entry
+        The directory to prepend to ``sys.path`` (the script's directory, or the
+        cwd for ``-m``).
+    argv
+        The ``sys.argv`` the debuggee should see.
+    main_globals
+        The globals to seed the fresh ``__main__`` namespace with.
+    open_browser
+        Whether to open a browser tab on start.
     """
     sys.argv = list(argv)
     sys.path.insert(0, sys_path_entry)
