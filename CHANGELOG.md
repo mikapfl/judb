@@ -6,6 +6,20 @@ at release time.
 
 <!-- towncrier release notes start -->
 
+## [0.2.0](https://github.com/mikapfl/judb/releases/tag/v0.2.0) — 2026-07-24
+
+### Fixed
+
+- Installing judb from a source checkout (`uv sync`, `pip install .`) no longer
+  hangs when your corepack-managed pnpm differs from the pinned version: the
+  frontend build now fetches the pinned pnpm automatically instead of waiting on a
+  confirmation prompt that never reaches you. ([#3](https://github.com/mikapfl/judb/issues/3))
+
+### Misc
+
+- [#2](https://github.com/mikapfl/judb/issues/2)
+
+
 ## [0.1.0](https://github.com/mikapfl/judb/releases/tag/v0.1.0) — 2026-07-24
 
 ### Added
