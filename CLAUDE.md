@@ -17,9 +17,11 @@ are; its §5 defines the phases and each phase's exit criterion.
 
 **Current status: Phase 3 Wave A shipped — `judb 0.1.0` is on PyPI** (`pip install
 judb` works; entry points `python -m judb`, `pytest --pdbcls`, and `set_trace` all
-land in the browser UI). Wave B (deepen the debugger — conditional breakpoints,
-break-on-exception, watch expressions, multi-file source, settings) is the current
-focus; see `docs/PHASE3_PLAN.md`. Phase 2 (four-pane app, the MVP) is complete. Phase 1
+land in the browser UI). Wave B (deepen the debugger) is the current focus; see
+`docs/PHASE3_PLAN.md`. Within it, **B1 (conditional/temporary/ignore breakpoints
++ the Breakpoints pane) and B2 (break-on-exception → post-mortem + the Exception
+pane) are done**; watch expressions (B3), multi-file `open_file` navigation (B4),
+and settings (B5) remain. Phase 2 (four-pane app, the MVP) is complete. Phase 1
 (vertical slice) is complete: `judb.set_trace()` starts a localhost websocket server
 (`judb/server.py`) and opens a browser page served from `judb/static/index.html`.
 That page is now the **built Svelte SPA** (source in `frontend/`, see below), not

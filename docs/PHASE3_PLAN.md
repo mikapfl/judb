@@ -11,11 +11,20 @@ Phase-2a codebase. Same conventions: **[DECISION]** = recommended but open,
 > **Status: Wave A shipped — `judb 0.1.0` is on PyPI** (`0.2.0` followed with
 > install/CI tweaks). `pip install judb` works and the entry points
 > (`python -m judb`, `pytest --pdbcls`, `set_trace`) all land in the browser UI.
-> **Wave B in progress: B1 is done and merged** (PR #4, *feat: better
-> breakpoints*), which also delivered B4's breakpoints panel. **B2 (break-on-
-> exception, uncaught path) is done** (PR #5) — `-m judb` catches a crash into
-> post-mortem and a new Exception pane surfaces it; the "break on all raised"
-> toggle is deferred (see B2). B3–B5 remain.
+>
+> **Wave B in progress.**
+> - **B1 ✅ done and merged** (PR #4, *feat: better breakpoints*), which also
+>   delivered B4's breakpoints panel.
+> - **B2 ✅ done** (uncaught path, branch `break-on-exception`) — `-m judb`
+>   catches a crash into post-mortem and an Exception pane surfaces it. The
+>   "break on all raised" toggle is deferred (see B2). The pane was then
+>   **reworked to render structured tracebacks** rather than IPython's ANSI, so
+>   all code in the UI is themed from one palette — that rework set a new
+>   invariant (see B2's *[DECISION] structure, never colour*, and `CLAUDE.md`
+>   "Three invariants"). Traceback frames are clickable, which is the first half
+>   of B4's navigation story.
+> - **B3–B5 remain.** B4 still needs `open_file`; B5 (settings) is now more
+>   valuable than it was, because a *user theme* has a real surface to bind to.
 
 Phase 2a gave us "something to show the world" — but only to someone sitting at a
 checkout running `make frontend` first. **Wave A makes it *reachable*** (a real
@@ -248,7 +257,14 @@ enters `interaction(None, exc)`); this wave wired the same landing into
 - *Exit met:* `pytest --pdbcls=judb:Debugger` on a failing test lands paused at
   the assertion frame and the console evaluates the failing expression's operands
   (ws-tested); `-m judb` on a crashing script lands post-mortem on the raising
-  frame (ws-tested); plus store vitest and a Playwright exception-pane test.
+  frame (ws-tested); plus `tests/test_tracebacks.py` for the chain shape, store
+  and pane vitest, and a Playwright exception-pane test that asserts the
+  traceback's `raise` has the *same computed colour* as the Source pane's and
+  that clicking a frame retargets the Variables pane.
+- **Bug found on the way:** `Anser.ansiToHtml` does not escape HTML, so a
+  debuggee printing markup wrote into judb's own page. `frontend/src/lib/ansi.ts`
+  is now the single entry point for ANSI and escapes first (shipped in 0.1.0 —
+  hence a `fixed` fragment of its own).
 
 ### B3. Watch expressions
 
@@ -278,10 +294,18 @@ Today the Source pane always shows the current/selected frame's file
   its cond/temporary/ignore and a per-row remove button that works cross-file (the
   server sends an `all_breakpoints` list — each record carrying its filename — on
   `paused` and on every `breakpoints` reply).
+- **✅ Traceback frames are clickable (B2's rework).** A frame in the Exception
+  pane that is still on the stack selects it, matched to the `stack` list on
+  filename+lineno+function. That covers *within-stack* navigation; it does not
+  need `open_file`, because every such file is already reachable via
+  `select_frame`.
 - **Still open:** *click-to-open* a breakpoint's file from the pane, and an
   `open_file(path)` → `source` message so you can view and set a breakpoint in a
   not-yet-hit file before `continue` (source is read via `linecache`, so serving an
-  arbitrary project file is cheap). This is what unlocks the exit below.
+  arbitrary project file is cheap). This is what unlocks the exit below. Note the
+  Exception pane already renders source for files that are *not* the selected
+  frame's, so `open_file` is the missing piece for making those views navigable,
+  not for reading them.
 - **[OPEN] Deferrable:** a file tree / fuzzy file-open. Nice, but scope-creep toward
   an editor. Deferred to Phase 4; ship path-open next.
 - *Exit (not yet met):* set a breakpoint in a file the debuggee hasn't reached yet,
@@ -297,6 +321,15 @@ No config layer exists. Introduce a minimal one rather than a big framework.
   truth: a small `pyproject.toml [tool.judb]` / `~/.config/judb` reader on the
   Python side for process-level options, plus the existing client-side localStorage
   for pure-UI prefs. Avoid inventing a bidirectional settings-sync protocol now.
+- **A user theme is now cheap, and is the obvious first custom setting.** B2's
+  rework made `frontend/src/lib/tokens.css` the single place any colour comes
+  from — `--tok-*` for every view of Python (source pane, console cells,
+  traceback) and `--ansi-*` for terminal output. A user theme is therefore a set
+  of custom-property overrides, not a per-component change; nothing in the
+  backend has a colour opinion to override. Open question when we get to it:
+  **[OPEN]** where a custom theme lives — localStorage-only (pure UI, consistent
+  with the existing light/dark toggle) vs. `[tool.judb.theme]` in
+  `pyproject.toml` so a project can ship one. Recommend localStorage first.
 - *Exit:* `[tool.judb] break_on_exception = false` in a project is honored.
 
 ---
@@ -305,9 +338,11 @@ No config layer exists. Introduce a minimal one rather than a big framework.
 
 - **Protocol deltas (all additive):** ✅ `set_break` gained
   `cond`/`temporary`/`ignore` and `paused`/`breakpoints` gained `all_breakpoints`
-  (PR #4). Still to come: `set_watches`, `open_file`; server→client `watches`; and
-  `paused` gaining an optional exception payload. Mirror each in `judb/protocol.py`
-  **and** `frontend/src/protocol.ts`.
+  (PR #4). ✅ `paused` gained an optional `exception` — `{type, message, chain}`,
+  where `chain` is the structured traceback from `judb/tracebacks.py` (mirrored
+  as `ExceptionInfo`/`ChainedException`/`TracebackFrame` in `protocol.ts`). Still
+  to come: `set_watches`, `open_file`; server→client `watches`. Mirror each in
+  `judb/protocol.py` **and** `frontend/src/protocol.ts`.
 - **Tests:** every backend command gets a Python ws test (extend
   `tests/test_debugger.py` or `tests/test_entrypoints.py`); the exception-pause and
   conditional-bp paths get Playwright coverage. Keep `make test` + `make

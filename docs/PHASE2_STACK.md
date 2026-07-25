@@ -53,6 +53,15 @@ the Jupyter **mime-bundle** contract (`judb/protocol.py`). Everything below is t
 - **Console cells** (editable): Python highlighting, history, and **tab-completion
   wired to the backend** (see §7 — a new `complete` round-trip to IPython's
   completer). Autocomplete UI is `@codemirror/autocomplete`.
+- **The `HighlightStyle` is the app's only definition of Python's colours**
+  (`judbHighlight` in `lib/codemirror.ts`, coloured via `--tok-*`). It is *not*
+  confined to editors: `lib/highlight.ts` runs it over a plain string with
+  `@lezer/highlight`'s `highlightCode`, which is how the Exception pane's
+  traceback matches the Source pane exactly (needs
+  `judbHighlight.module.getRules()` published into the document, since no
+  `EditorView` mounts it there). Anything else that has to show Python outside an
+  editor should go through that helper rather than growing a second palette —
+  see `CLAUDE.md` "Three invariants".
 
 ## 4. Rich output rendering — **[DECIDED] lean renderer first, rendermime behind a seam**
 
@@ -95,8 +104,16 @@ heaviest / most version-coupled / most build-fragile dep, so we sequence it:
   `{status, frame, source, stack, locals, cells}` plus `send(cmd)`; owns the
   WebSocket and reconnection. No Redux/Zustand-equivalent. **[REC]**
 - **Styling**: hand-written scoped CSS + a small `tokens.css` (CSS custom
-  properties) for the dark theme. **No Tailwind** — avoids a second build opinion
-  for a four-pane app. **[REC]**
+  properties). **No Tailwind** — avoids a second build opinion for a four-pane
+  app. **[REC]** *As built:* dark is the base (`:root`), light overrides under
+  `:root[data-theme="light"]` which `lib/theme.svelte.ts` stamps before mount.
+  `tokens.css` carries **three** palettes and every colour in the app comes from
+  one of them: the chrome (`--bg`/`--fg`/`--accent`/…), the syntax palette
+  (`--tok-*`, consumed by `judbHighlight` — see §3), and the 16 ANSI terminal
+  colours (`--ansi-*`, consumed by `lib/ansi.ts` for real terminal output).
+  Keeping the last two separate is deliberate: aliasing ANSI to `--tok-*` made a
+  debuggee's coloured `print` come out in syntax colours. A future user theme is
+  an override of these variables — nothing else.
 - **Protocol types**: `frontend/src/protocol.ts`, hand-mirrored from
   `protocol.py`, kept in sync manually (small surface). Codegen is overkill now.
   **[REC]**

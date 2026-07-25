@@ -379,9 +379,15 @@ dep and slimmed `numpy`/`pandas` into extras). **Wave B is underway:** B1 —
 conditional/temporary/ignore-count breakpoints — is **shipped** (PR #4), with a
 gutter condition-editor popover, breakpoints that snap off blank/comment lines to
 the next statement, and a **Breakpoints pane** listing every breakpoint across
-files (delivering B4's panel early). Still ahead in Wave B: break-on-exception +
-post-mortem, watch expressions, multi-file *navigation* (`open_file`), and a
-minimal settings layer.
+files (delivering B4's panel early). B2 — **break-on-exception + post-mortem** —
+is **shipped** for the uncaught path: `python -m judb` catches a crash into
+post-mortem and an **Exception** pane lays the traceback out the way Python does,
+with clickable frames that select the frame. Its lasting architectural outcome is
+that **the backend ships traceback *structure*, never colour** (`judb/tracebacks.py`)
+and the browser highlights it with the editors' own palette — so every view of
+Python in the UI is themed from one set of CSS custom properties, which is what a
+user-supplied theme will bind to. Still ahead in Wave B: watch expressions,
+multi-file *navigation* (`open_file`), and a minimal settings layer.
 
 **Phase 3a – saved debug expressions.** Add a way to save + load cell sources
 close to the source, so repeated debugging can re-use cells. Things to consider
