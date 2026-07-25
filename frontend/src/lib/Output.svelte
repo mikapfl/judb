@@ -1,17 +1,13 @@
 <script lang="ts">
-  import Anser from "anser";
   import { marked } from "marked";
   import type { Output } from "../protocol";
   import { WEBAGG_MIME } from "../protocol";
+  import { ansiToHtml as ansi } from "./ansi";
   import { theme } from "./theme.svelte";
   import { htmlDoc, vizDoc, vizMime } from "./richOutput";
   import WebAggFigure from "./WebAggFigure.svelte";
 
   let { output }: { output: Output } = $props();
-
-  // ANSI -> HTML with inline styles; anser escapes HTML entities, so {@html} is
-  // safe here (IPython streams + tracebacks carry ANSI colour codes).
-  const ansi = (s: string) => Anser.ansiToHtml(s, { use_classes: false });
 
   // The "registry": ordered richest-first list of standard mimes we render inline.
   const RICH_MIMES = [
@@ -111,8 +107,9 @@
 {:else if richMime === "application/json"}
   <pre class="out">{JSON.stringify(d["application/json"], null, 2)}</pre>
 {:else if richMime === "text/plain"}
-  <!-- text/plain often carries ANSI (e.g. `obj?` introspection); anser escapes
-       HTML, so plain reprs render identically while coloured ones show right. -->
+  <!-- text/plain often carries ANSI (e.g. `obj?` introspection); ansiToHtml
+       escapes HTML, so plain reprs render identically while coloured ones show
+       right — and a repr full of markup can't inject into the page. -->
   <pre class="out">{@html ansi(String(d["text/plain"]))}</pre>
 {:else if richMime}
   <pre class="out">{String(d[richMime])}</pre>

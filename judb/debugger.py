@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 from . import mpl_backend
 from .console import Console
 from .protocol import CellResult
+from .tracebacks import format_traceback
 
 if TYPE_CHECKING:
     from .server import DebugServer
@@ -398,10 +399,10 @@ class Debugger(bdb.Bdb):
             message["exception"] = {
                 "type": type(self._exc).__name__,
                 "message": str(self._exc),
-                # The syntax-highlighted (ANSI) traceback, formatted by the same
-                # IPython machinery a raising cell goes through, so the Exception
-                # pane's coloring matches the console's exactly.
-                "traceback": self.console.format_traceback(self._exc),
+                # Structure, not colour: the Exception pane highlights these
+                # source lines with the same CodeMirror theme as the Source pane,
+                # so a theme switch recolours tracebacks too (see tracebacks.py).
+                "chain": format_traceback(self._exc),
             }
         self._emit(message)
 

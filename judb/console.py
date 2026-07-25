@@ -19,7 +19,6 @@ the paused frame's real objects.
 import contextlib
 import io
 import pydoc
-import traceback
 from collections.abc import Iterator
 from types import FrameType
 from typing import Any
@@ -333,34 +332,6 @@ class Console:
         The first output's ``text/plain`` payload, or ``None`` if none.
         """
         return self.run_cell(code, frame).first_of("text/plain")
-
-    def format_traceback(self, exc: BaseException) -> list[str]:
-        """Format ``exc`` as a syntax-highlighted traceback (ANSI-colored).
-
-        Uses IPython's own ``InteractiveTB`` — the very formatter a cell that
-        raises runs through — so the coloring is identical to the traceback the
-        console shows on an error. Returned as the frontend's mime-bundle shape
-        expects (a list of line fragments that concatenate to the full text),
-        carrying ANSI escapes for :func:`anser` to turn into colored HTML. Used
-        for the post-mortem Exception pane.
-
-        Parameters
-        ----------
-        exc
-            The exception to format; its ``__traceback__`` supplies the frames.
-
-        Returns
-        -------
-        The ANSI-colored traceback as keep-ends line fragments (empty if it
-        could not be formatted).
-        """
-        tb_handler = self.shell.InteractiveTB
-        try:
-            stb = tb_handler.structured_traceback(type(exc), exc, exc.__traceback__)
-            text = tb_handler.stb2text(stb)
-        except Exception:  # noqa: BLE001 — fall back to a plain traceback on any failure
-            text = "".join(traceback.format_exception(exc))
-        return text.splitlines(keepends=True)
 
     # --- tab completion ---------------------------------------------------
 

@@ -81,7 +81,13 @@ export const judbTheme = EditorView.theme({
 });
 
 /** Python syntax palette, coloured via CSS variables (tokens.css) so it recolours
- *  on a theme switch. Replaces CodeMirror's fixed `defaultHighlightStyle`. */
+ *  on a theme switch. Replaces CodeMirror's fixed `defaultHighlightStyle`.
+ *
+ *  This is the app's *only* definition of "what colour is a keyword". Anything
+ *  else that shows Python — the source pane, console cells, and the Exception
+ *  pane's traceback (see highlight.ts) — highlights through this object, so a
+ *  theme change is a pure CSS-variable swap with no second palette to keep in
+ *  step. Nothing in the backend has a colour opinion. */
 export const judbHighlight = HighlightStyle.define([
   { tag: [t.keyword, t.controlKeyword, t.moduleKeyword], color: "var(--tok-keyword)" },
   { tag: [t.string, t.special(t.string), t.regexp], color: "var(--tok-string)" },
@@ -101,6 +107,10 @@ export const judbHighlight = HighlightStyle.define([
   { tag: [t.self, t.standard(t.variableName)], color: "var(--tok-builtin)" },
   { tag: [t.variableName, t.propertyName], color: "var(--tok-variable)" },
 ]);
+
+/** The Python parser, exposed for highlighting standalone snippets (highlight.ts)
+ *  without standing up an `EditorView`. */
+export const pythonParser = python().language.parser;
 
 // --- current-line highlight (source pane) -------------------------------
 

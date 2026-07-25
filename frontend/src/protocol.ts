@@ -71,14 +71,48 @@ export interface FrameView {
   breakpoints: Breakpoint[];
 }
 
-/** The exception behind a post-mortem pause, for the exception banner. */
+/** One traceback frame: where it is, and a window of source around the failing
+ *  line. The backend ships no colour — the pane highlights `lines` with the
+ *  editors' own theme (see lib/highlight.ts). Mirrors judb/tracebacks.py. */
+export interface TracebackFrame {
+  filename: string;
+  /** 1-based line that was executing in this frame. */
+  lineno: number;
+  /** The enclosing function's name (`"<module>"` at module level). */
+  function: string;
+  /** The source window; may be empty when the file could not be read. */
+  lines: string[];
+  /** 1-based line number of `lines[0]`. */
+  first_lineno: number;
+  /** Fine-grained anchor into the failing line (`~~~^~~~`), when known. */
+  col?: number;
+  end_col?: number;
+}
+
+/** One exception in a chain: what it was, and where it came from. */
+export interface ChainedException {
+  /** The exception's *qualified* class name, the way Python prints it (bare for
+   *  builtins: `"ValueError"`; `"mod.Cls"` for others). */
+  type: string;
+  /** What `traceback.format_exception_only` prints — `"Type: message"`, plus a
+   *  SyntaxError's caret line and any `__notes__`. */
+  headline: string[];
+  /** Innermost-last frames of this exception's own traceback. */
+  frames: TracebackFrame[];
+  /** How this follows the previous chain entry: `raise ... from ...`
+   *  (`"cause"`) or raised while handling it (`"context"`). Absent on the
+   *  first entry. */
+  relation?: "cause" | "context";
+}
+
+/** The exception behind a post-mortem pause, for the Exception pane. */
 export interface ExceptionInfo {
   /** The exception's class name, e.g. `"ValueError"`. */
   type: string;
   /** Its `str()` — the message. */
   message: string;
-  /** The full formatted traceback lines (`traceback.format_exception`). */
-  traceback: string[];
+  /** The exception chain, oldest cause first (the way Python prints it). */
+  chain: ChainedException[];
 }
 
 export interface PausedMsg extends FrameView {

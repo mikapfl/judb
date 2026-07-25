@@ -182,8 +182,22 @@ debuggee and (eventually) the web server:
   FIFO-correlated `complete`→`completions` round-trip). The backend contract is
   unchanged: same queues, same mime bundles.
 
-### Two invariants that are easy to break
+### Three invariants that are easy to break
 
+- **Colour lives in the frontend, in one palette per kind.** The backend never
+  decides what colour anything is. Python source — the Source pane, console
+  cells, and the Exception pane's traceback — is highlighted from the single
+  `judbHighlight` style in `lib/codemirror.ts`, whose colours are `--tok-*`
+  custom properties (`lib/tokens.css`); `lib/highlight.ts` applies it outside an
+  `EditorView`. That's why `judb/tracebacks.py` ships traceback *structure*, not
+  IPython's ANSI text: a theme (later, a user's own) is then one set of variables
+  and everything showing code follows. Genuine terminal output keeps a separate,
+  honest 16-colour ANSI palette (`lib/ansi.ts` + `--ansi-*`) — never alias the
+  two, or a debuggee's coloured `print` starts wearing syntax colours.
+- **Anything from the debuggee is escaped before `{@html}`.** `Anser.ansiToHtml`
+  does *not* escape; `lib/ansi.ts` wraps it with `escapeForHtml` so a printed
+  `<img onerror=…>` can't write into judb's own page. Route ANSI through that
+  helper, never anser directly.
 - **Threading model.** Cells execute on the *debuggee thread* (the one that's
   paused), because touching frame state and matplotlib/thread-local state must
   happen there. The interaction loop blocks that thread on `inbound.get()`; the

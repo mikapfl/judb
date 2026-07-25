@@ -356,6 +356,20 @@ test("post-mortem: the exception pane shows the crash after continue", async ({ 
     await expect(pane).toContainText("bad rows");
     await expect(page.locator(".exc-tb")).toContainText("ValueError: bad rows");
     await expect(page.locator(".exc-tb")).toContainText("compute");
+
+    // The failing line is marked and its source is highlighted here in the
+    // browser, from the same palette as the source editor — so the traceback
+    // and the Source pane paint `raise` with the identical colour.
+    // One marked line per frame; the innermost (last) one is where it raised.
+    const failing = page.locator(".exc-tb .row.current").last();
+    await expect(failing).toContainText('raise ValueError("bad rows")');
+    const tbKeyword = failing.locator("span", { hasText: /^raise$/ }).first();
+    const srcKeyword = page
+      .locator(".cm-content span", { hasText: /^raise$/ })
+      .first();
+    const color = (l: typeof tbKeyword) =>
+      l.evaluate((n) => getComputedStyle(n).color);
+    expect(await color(tbKeyword)).toBe(await color(srcKeyword));
   } finally {
     if (proc.exitCode === null) proc.kill("SIGKILL");
   }

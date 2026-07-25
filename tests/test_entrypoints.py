@@ -23,7 +23,6 @@
 
 import asyncio
 import os
-import re
 import subprocess
 import sys
 import textwrap
@@ -80,12 +79,11 @@ def test_postmortem_over_websocket():
             exc = paused["exception"]
             assert exc["type"] == "ValueError"
             assert exc["message"] == "kaboom"
-            # The syntax-highlighted traceback rides along for the UI's rich,
-            # colored display (ANSI, like the console) — strip the color codes
-            # to assert on its content.
-            plain = re.sub(r"\x1b\[[0-9;]*m", "", "".join(exc["traceback"]))
-            assert "ValueError: kaboom" in plain
-            assert "inner" in plain  # the failing frame is in the traceback
+            # The traceback rides along as *structure* (no colors — the browser
+            # highlights the source itself; see judb/tracebacks.py).
+            (entry,) = exc["chain"]
+            assert entry["headline"] == ["ValueError: kaboom"]
+            assert entry["frames"][-1]["function"] == "inner"  # the failing frame
             # Innermost (failing) frame is selected.
             assert paused["function"] == "inner"
             assert "values" in paused["locals"]

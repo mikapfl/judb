@@ -209,12 +209,28 @@ enters `interaction(None, exc)`); this wave wired the same landing into
   trimmed off the top of the traceback (walk to the frame whose code *is* the
   target), so the post-mortem stack starts at the debuggee's module frame. The
   process still exits non-zero (`SystemExit(1)`) so the failure signal survives.
-  The `paused` message's `exception` now carries the full formatted `traceback`
-  (via `traceback.format_exception`) alongside `type`/`message`.
+  The `paused` message's `exception` carries a structured `chain` (see below)
+  alongside `type`/`message`.
 - **Frontend.** A new **Exception** pane (rightmost on the bottom row) shows the
   exception type, message, and traceback whenever a pause is post-mortem, and
   stays empty otherwise. The store tracks `exception`/`postmortem` (set on
   `paused`, cleared on resume). `ExceptionInfo` mirrored into `protocol.ts`.
+- **[DECISION] the backend ships traceback *structure*, never colour.**
+  `judb/tracebacks.py` turns an exception into a JSON chain (oldest cause first;
+  per frame: file, line, function, a source window, and 3.11+ anchor columns)
+  using stdlib `traceback` only. The first cut instead shipped IPython's
+  ANSI-coloured traceback and mapped the escape codes to CSS in the browser —
+  which meant reverse-engineering *which Pygments token* an ANSI colour stood
+  for (`.ansi-palette-28-fg → --tok-keyword`), a mapping that is a guess, is
+  incomplete by construction, and rots whenever IPython changes style. Worse, it
+  aliased the ANSI palette to the syntax palette, so a debuggee's own coloured
+  `print` came out in syntax colours. Now the pane highlights those source lines
+  with the same `judbHighlight` the editors use (`frontend/src/lib/highlight.ts`,
+  via lezer's `highlightCode` — no new dependency), so **every part of the UI
+  that shows Python is themed from one `--tok-*` palette** and a user-supplied
+  theme will recolour all of them at once. ANSI stays what it actually is —
+  terminal colour — with its own honest 16-colour theme palette
+  (`frontend/src/lib/ansi.ts`).
 - **[DECISION] realised as *uncaught only*.** The default policy — break on
   *uncaught* exceptions (like pdb post-mortem) — is what shipped, since breaking
   on every `raise` is noise in scientific code full of caught exceptions. The

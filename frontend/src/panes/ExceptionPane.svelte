@@ -2,14 +2,55 @@
   // The rightmost bottom pane: the exception behind a post-mortem pause (pytest
   // `--pdb`, or `-m judb` catching a crash). Empty when there is no exception —
   // an ordinary pause shows nothing here. Type + message sit at the top; the
-  // full formatted traceback fills the rest as a scrollable block.
-  import Anser from "anser";
+  // exception chain fills the rest as a scrollable, Python-shaped traceback.
+  //
+  // The backend sends *structure*, never colour (judb/tracebacks.py): each frame
+  // carries a window of raw source, which we highlight here with the very same
+  // CodeMirror highlight style the Source pane uses. So the traceback is themed
+  // by tokens.css alone — override the theme and this follows automatically.
   import { conn } from "../lib/connection.svelte";
+  import { highlightLines } from "../lib/highlight";
+  import type { TracebackFrame } from "../protocol";
 
-  // The backend formats the traceback with IPython's own machinery, so it
-  // carries the same ANSI color codes a raising console cell does. anser escapes
-  // HTML entities, so {@html} is safe here (cf. Output.svelte).
-  const ansi = (s: string) => Anser.ansiToHtml(s, { use_classes: false });
+  /** How Python introduces a chained exception. */
+  const RELATION_TEXT = {
+    cause: "The above exception was the direct cause of the following exception:",
+    context: "During handling of the above exception, another exception occurred:",
+  };
+
+  /** The `^^^^` markers under the failing sub-expression (Python 3.11+ anchors),
+   *  or null when there are none — or when they would underline the whole line,
+   *  which is noise (Python omits them there too). */
+  function anchor(frame: TracebackFrame, line: string): string | null {
+    if (frame.col == null || frame.end_col == null) return null;
+    const start = Math.max(0, frame.col);
+    const end = Math.min(line.length, frame.end_col);
+    if (end <= start) return null;
+    const indent = line.length - line.trimStart().length;
+    if (start <= indent && end >= line.trimEnd().length) return null;
+    return " ".repeat(start) + "^".repeat(end - start);
+  }
+
+  /** One rendered source row: its number, its highlighted HTML, and whether it
+   *  is the line that was executing (marked like the source pane's current line). */
+  function rows(frame: TracebackFrame) {
+    const html = highlightLines(frame.lines.join("\n"));
+    return frame.lines.map((line, i) => {
+      const lineno = frame.first_lineno + i;
+      const current = lineno === frame.lineno;
+      return {
+        lineno,
+        current,
+        html: html[i] ?? "",
+        anchor: current ? anchor(frame, line) : null,
+      };
+    });
+  }
+
+  const chain = $derived(conn.exception?.chain ?? []);
+
+  /** Basename for display; the full path stays in the `title`. */
+  const basename = (path: string) => path.split(/[\\/]/).pop() || path;
 </script>
 
 <div class="exception">
@@ -18,8 +59,40 @@
       <span class="exc-type">{conn.exception.type}</span>
       <span class="exc-msg">{conn.exception.message}</span>
     </div>
-    {#if conn.exception.traceback?.length}
-      <pre class="exc-tb">{@html ansi(conn.exception.traceback.join(""))}</pre>
+    {#if chain.length}
+      <div class="exc-tb">
+        {#each chain as entry, i (i)}
+          {#if entry.relation}
+            <p class="relation">{RELATION_TEXT[entry.relation]}</p>
+          {/if}
+          {#if entry.frames.length}
+            <p class="tb-intro">Traceback (most recent call last):</p>
+          {/if}
+          {#each entry.frames as frame, j (j)}
+            <div class="frame">
+              <!-- `file.py:12 in func`, the same shorthand the call stack uses;
+                   the full path stays in the tooltip since the pane is narrow. -->
+              <div class="frame-loc" title={frame.filename}>
+                <span class="file">{basename(frame.filename)}:{frame.lineno}</span>
+                in <span class="fn">{frame.function}</span>
+              </div>
+              {#each rows(frame) as row (row.lineno)}
+                <div class="row" class:current={row.current}>
+                  <span class="gutter">{row.lineno}</span>
+                  <!-- highlightLines escapes its input, so {@html} is safe. -->
+                  <span class="src">{@html row.html}</span>
+                </div>
+                {#if row.anchor}
+                  <div class="row anchor">
+                    <span class="gutter"></span><span class="src">{row.anchor}</span>
+                  </div>
+                {/if}
+              {/each}
+            </div>
+          {/each}
+          <p class="headline">{entry.headline.join("\n")}</p>
+        {/each}
+      </div>
     {/if}
   {:else}
     <p class="empty">No exception.</p>
@@ -52,14 +125,63 @@
   .exc-tb {
     flex: 1;
     min-height: 0;
-    margin: 0;
     overflow: auto;
     padding: 0.5rem;
     font-family: var(--font-mono, monospace);
     font-size: 0.8rem;
-    line-height: 1.35;
-    white-space: pre;
+    line-height: 1.4;
     color: var(--fg);
+  }
+  .relation,
+  .tb-intro {
+    margin: 0.6rem 0 0.2rem;
+    color: var(--fg-dim);
+  }
+  .relation {
+    font-style: italic;
+  }
+  .frame {
+    margin-bottom: 0.35rem;
+  }
+  .frame-loc {
+    color: var(--fg-dim);
+    padding-left: 0.2rem;
+  }
+  .frame-loc .file {
+    color: var(--fg);
+  }
+  .frame-loc .fn {
+    color: var(--accent);
+  }
+  .row {
+    display: flex;
+    white-space: pre;
+  }
+  .row.current {
+    background: var(--accent-bg);
+  }
+  .gutter {
+    flex: none;
+    width: 4ch;
+    padding-right: 0.6rem;
+    text-align: right;
+    color: var(--fg-faint);
+    user-select: none;
+  }
+  /* Long lines scroll the pane rather than wrapping: a wrapped line would break
+     the anchor markers' alignment with the code above them. */
+  .src {
+    flex: none;
+  }
+  .anchor .src {
+    color: var(--err-fg);
+  }
+  .headline {
+    margin: 0.2rem 0 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--err-fg);
+    font-weight: 600;
   }
   .empty {
     margin: 0;
