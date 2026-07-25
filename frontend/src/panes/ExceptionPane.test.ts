@@ -50,7 +50,7 @@ describe("ExceptionPane component", () => {
     // Location: basename shown, full path in the title (for narrow panes).
     const loc = container.querySelector(".frame-loc");
     expect(loc?.textContent?.replace(/\s+/g, " ").trim()).toBe("crash.py:3 in divide");
-    expect(loc?.getAttribute("title")).toBe("/tmp/demo/crash.py");
+    expect(loc?.getAttribute("title")).toContain("/tmp/demo/crash.py");
 
     const gutters = [...container.querySelectorAll(".row .gutter")].map(
       (n) => n.textContent,
@@ -133,14 +133,18 @@ describe("ExceptionPane component", () => {
     selectFrame.mockRestore();
   });
 
-  it("leaves a frame that has already unwound inert", () => {
+  it("opens the file of a frame that has already unwound", () => {
     conn.exception = ZERO_DIV;
-    // Nothing in the stack matches (a chained cause, or a stale traceback).
+    // Nothing in the stack matches (a chained cause, or a stale traceback), so
+    // there is no frame to select — but the file is still readable.
     conn.stack = [{ filename: "/tmp/demo/other.py", lineno: 3, function: "divide" }];
+    const openFile = vi.spyOn(conn, "openFile").mockImplementation(() => {});
+
     const { container } = render(ExceptionPane);
-    expect(container.querySelector("button.frame-loc")).toBeNull();
-    expect(container.querySelector("div.frame-loc")?.textContent).toContain(
-      "crash.py:3",
-    );
+    const button = container.querySelector<HTMLButtonElement>("button.frame-loc");
+    expect(button?.textContent).toContain("crash.py:3");
+    button?.click();
+    expect(openFile).toHaveBeenCalledWith("/tmp/demo/crash.py", 3);
+    openFile.mockRestore();
   });
 });

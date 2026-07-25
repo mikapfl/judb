@@ -44,6 +44,9 @@ export const judbTheme = EditorView.theme({
   },
   ".cm-activeLine": { backgroundColor: "transparent" },
   ".cm-current-line": { backgroundColor: "var(--accent-bg)" },
+  // The line we *navigated* to in a file that isn't the paused frame's — a
+  // marker, not a claim about where execution is (see `setMarkedLine`).
+  ".cm-marked-line": { boxShadow: "inset 2px 0 0 0 var(--accent)" },
   ".cm-scroller": { fontFamily: "var(--font-mono)" },
   "&.cm-focused": { outline: "none" },
   // Clickable gutter: a red dot marks a set breakpoint (a diamond if it carries
@@ -131,6 +134,36 @@ export const currentLineField = StateField.define<DecorationSet>({
         if (n < 1 || n > tr.state.doc.lines) return Decoration.none;
         const line = tr.state.doc.line(n);
         return Decoration.set([currentLineDeco.range(line.from)]);
+      }
+    }
+    return deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+// --- navigated-to line (source pane, while browsing another file) --------
+
+/** Set the 1-based line a navigation landed on, or 0 to clear.
+ *
+ *  Deliberately distinct from `setCurrentLine`: while browsing a file the
+ *  debuggee is not stopped in, marking a line as "current" would be a lie —
+ *  this only says "here is what you asked to see". */
+export const setMarkedLine = StateEffect.define<number>();
+
+const markedLineDeco = Decoration.line({ class: "cm-marked-line" });
+
+export const markedLineField = StateField.define<DecorationSet>({
+  create() {
+    return Decoration.none;
+  },
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const e of tr.effects) {
+      if (e.is(setMarkedLine)) {
+        const n = e.value;
+        if (n < 1 || n > tr.state.doc.lines) return Decoration.none;
+        const line = tr.state.doc.line(n);
+        return Decoration.set([markedLineDeco.range(line.from)]);
       }
     }
     return deco;
@@ -245,6 +278,7 @@ export function sourceExtensions(onToggleBreakpoint?: (line: number) => void) {
     python(),
     syntaxHighlighting(judbHighlight),
     currentLineField,
+    markedLineField,
     judbTheme,
     EditorView.editable.of(false),
     EditorState.readOnly.of(true),

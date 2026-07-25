@@ -27,4 +27,9 @@ def main() -> None:
 
 
 main()
+# Runs only after the browser continues — `later.py` is the file the multi-file
+# test opens and breaks in while it is still unreached.
+import later
+
+print(later.finish(1.0), flush=True)
 print("DEBUGGEE_DONE", flush=True)

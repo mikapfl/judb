@@ -20,8 +20,8 @@ judb` works; entry points `python -m judb`, `pytest --pdbcls`, and `set_trace` a
 land in the browser UI). Wave B (deepen the debugger) is the current focus; see
 `docs/PHASE3_PLAN.md`. Within it, **B1 (conditional/temporary/ignore breakpoints
 + the Breakpoints pane), B2 (break-on-exception → post-mortem + the Exception
-pane) and B3 (watch expressions + the Watch pane) are done**; multi-file
-`open_file` navigation (B4) and settings (B5) remain. Phase 2 (four-pane app, the MVP) is complete. Phase 1
+pane), B3 (watch expressions + the Watch pane) and B4 (multi-file `open_file`
+navigation) are done**; settings (B5) remains. Phase 2 (four-pane app, the MVP) is complete. Phase 1
 (vertical slice) is complete: `judb.set_trace()` starts a localhost websocket server
 (`judb/server.py`) and opens a browser page served from `judb/static/index.html`.
 That page is now the **built Svelte SPA** (source in `frontend/`, see below), not
@@ -162,7 +162,8 @@ debuggee and (eventually) the web server:
   against the paused frame; `select_frame`/`expand`/`complete`/`set_watches`
   retarget/inspect/complete/watch against the *selected* frame
   (`self._frames[self._selected]`, so watches re-evaluate on every pause, frame
-  change and cell run);
+  change and cell run); `open_file` serves *any* source file (read-only, via
+  `linecache`) so the browser can show — and break in — a file no frame is in;
   `step`/`next`/`continue`/`return`/`quit` set bdb state and *return* from the loop
   to unblock the debuggee.
 - **`judb/protocol.py`** — `Output`/`CellResult` dataclasses. Outputs deliberately
@@ -189,8 +190,13 @@ debuggee and (eventually) the web server:
   FIFO-correlated `complete`→`completions` round-trip). `panes/WatchPane.svelte`
   owns the watch *list* (persisted to `localStorage`, re-sent whole on every
   connect — the backend holds only what it was last told, so the two can't
-  desync); the values come back on `watches`. The backend contract is
-  unchanged: same queues, same mime bundles.
+  desync); the values come back on `watches`. The Source pane shows the selected
+  frame's file *or* a browsed one (`conn.viewing`, from `open_file`): everything
+  acting on "the file on screen" — the gutter, every breakpoint command — goes
+  through `shownFilename`/`shownSource`/`shownBreakpoints`, and the current-line
+  highlight is reserved for the frame (a browsed file gets the weaker
+  `setMarkedLine` instead, since nothing is executing there). The backend
+  contract is unchanged: same queues, same mime bundles.
 
 ### Three invariants that are easy to break
 

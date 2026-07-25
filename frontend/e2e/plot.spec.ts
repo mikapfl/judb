@@ -409,6 +409,62 @@ test("clicking an outer stack frame retargets the variables pane", async ({ page
   }
 });
 
+test("open a file the debuggee hasn't reached, break in it, and stop there", async ({
+  page,
+}) => {
+  // The multi-file criterion: the Source pane can only ever show a file some
+  // frame is in, which makes the breakpoint you actually want — in code you
+  // have not run yet — impossible to place. `later.py` is imported only after
+  // the pause, so it is unreachable through the stack.
+  const { proc, url } = await startDebuggee();
+
+  try {
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+    await expect(page.locator(".source .filebar .name")).toHaveText("debuggee.py");
+
+    // Open it by path (relative to the debuggee's working directory).
+    await page.getByRole("button", { name: "Open file…" }).click();
+    await page.getByLabel("Open file").fill("frontend/e2e/later.py");
+    await page.getByLabel("Open file").press("Enter");
+
+    // The pane says plainly that this is not where the debuggee is stopped.
+    await expect(page.locator(".source .filebar .name")).toHaveText("later.py");
+    await expect(page.locator(".source .filebar")).toContainText("not the paused frame");
+    await expect(page.locator(".source")).toContainText("LATER_FRAME");
+
+    // Break on `summary = ...` (line 11) — the gutter now targets *this* file.
+    await page
+      .locator(".source .cm-breakpoint-gutter .cm-gutterElement:visible")
+      .nth(10)
+      .click();
+    await expect(page.locator(".breakpoints")).toContainText("later.py");
+    await expect(page.locator(".breakpoints li")).toContainText("line 11");
+
+    // Back to the frame, then navigate to that breakpoint from the pane — a
+    // file no frame is in is reachable from there too.
+    await page.getByRole("button", { name: "Back to frame" }).click();
+    await expect(page.locator(".source .filebar .name")).toHaveText("debuggee.py");
+    await page.locator(".breakpoints").getByRole("button", { name: "line 11" }).click();
+    await expect(page.locator(".source .filebar .name")).toHaveText("later.py");
+    await expect(page.locator(".source .cm-marked-line")).toHaveCount(1);
+
+    // Continue: the module is imported, called, and we stop inside it — with
+    // the pane back to showing the frame the debuggee is really in.
+    await page.getByRole("button", { name: "Continue" }).click();
+    await expect(page.locator("header .loc")).toContainText("finish()", {
+      timeout: 15_000,
+    });
+    await expect(page.locator("header .loc")).toContainText("later.py:11");
+    await expect(page.locator(".source .filebar")).not.toContainText(
+      "not the paused frame",
+    );
+    await expect(page.locator(".vars")).toContainText("value");
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
+
 test("watch expressions follow the selected frame and survive a reload", async ({
   page,
 }) => {

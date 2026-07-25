@@ -36,6 +36,13 @@ export interface Cell {
   count: number | null;
 }
 
+/** A file opened for browsing — one that no frame is in (see `openFile`). */
+export interface SourceView {
+  filename: string;
+  source: string;
+  breakpoints: Breakpoint[];
+}
+
 /** Cached result of expanding one variable path (keyed by JSON.stringify(path)). */
 export interface ExpandState {
   loading: boolean;
@@ -98,6 +105,13 @@ class Connection {
   // Lazily-fetched variable subtrees, keyed by JSON.stringify(path). Cleared
   // whenever the targeted frame changes, since locals differ per frame.
   expanded = $state<Record<string, ExpandState>>({});
+  // A file being browsed instead of the selected frame's (null = showing the
+  // frame). Set by `openFile`, dropped whenever execution moves or another
+  // frame is selected — landing somewhere new always wins over browsing.
+  viewing = $state<SourceView | null>(null);
+  // The line a navigation asked to see (0 = none). Marked and scrolled to, but
+  // never presented as the current line: while browsing, nothing is executing.
+  markedLine = $state(0);
   // Watch expressions the user pinned, and their values in the selected frame.
   // The list is ours (persisted, re-sent on connect); the values come from the
   // backend, which re-evaluates them on every pause, frame change and cell run.
@@ -122,6 +136,9 @@ class Connection {
   // result to the cell that asked for it (any cell can be re-run, not just the
   // newest), independent of the notebook's current order.
   #pendingExec: number[] = [];
+  // FIFO of `open_file` requests awaiting their `source` reply, so each reply
+  // knows which line the click asked to see (replies come back in send order).
+  #pendingOpen: Array<{ filename: string; line: number }> = [];
   // Interactive-matplotlib (WebAgg) figures: a handler per live canvas, keyed by
   // figure id, plus a buffer for messages that arrive before the canvas mounts
   // (the backend may send an initial frame before the cell output renders).
@@ -136,6 +153,41 @@ class Connection {
    *  in which interrupting makes sense. */
   get busy(): boolean {
     return this.cells.some((c) => c.pending);
+  }
+
+  // --- what the Source pane shows -------------------------------------
+  //
+  // Normally the selected frame's file; while browsing (`viewing`), the opened
+  // one. Everything that acts on "the file on screen" — the gutter, the
+  // breakpoint commands — goes through these, so the two cases share one path.
+
+  get browsing(): boolean {
+    return this.viewing !== null;
+  }
+
+  get shownFilename(): string {
+    return this.viewing?.filename ?? this.filename;
+  }
+
+  get shownSource(): string {
+    return this.viewing?.source ?? this.source;
+  }
+
+  get shownBreakpoints(): Breakpoint[] {
+    return this.viewing?.breakpoints ?? this.breakpoints;
+  }
+
+  /** Every file judb can already name: the stack, the breakpoints, and the
+   *  traceback. Offered as suggestions when opening a file — anything else is
+   *  still reachable by typing its path. */
+  get knownFiles(): string[] {
+    const names = new Set<string>();
+    for (const frame of this.stack) names.add(frame.filename);
+    for (const bp of this.allBreakpoints) names.add(bp.filename);
+    for (const entry of this.exception?.chain ?? []) {
+      for (const frame of entry.frames) names.add(frame.filename);
+    }
+    return [...names].sort();
   }
 
   get location(): string {
@@ -243,28 +295,49 @@ class Connection {
     this.send({ cmd: "select_frame", index });
   }
 
+  // --- source navigation ----------------------------------------------
+  //
+  // Show any file, not just one the debuggee is stopped in — which is what
+  // makes a breakpoint in code it hasn't reached yet possible to set at all.
+
+  /** Show `filename` in the Source pane, scrolled to `line` (0 = top). Opening
+   *  the selected frame's own file just marks the line; the pane stays on the
+   *  frame (with its current-line highlight) rather than entering browse mode. */
+  openFile(filename: string, line = 0): void {
+    if (!filename) return;
+    this.#pendingOpen.push({ filename, line });
+    this.send({ cmd: "open_file", filename });
+  }
+
+  /** Leave browse mode and go back to the selected frame's file. */
+  backToFrame(): void {
+    this.viewing = null;
+    this.markedLine = 0;
+  }
+
   // --- breakpoints ----------------------------------------------------
   //
   // The gutter toggles a line: set it if absent, clear it if present. The
   // backend replies with a `breakpoints` message that refreshes the list.
+  // All of these act on the file *on screen*, which may be a browsed one.
   toggleBreak(line: number): void {
-    if (!this.filename) return;
+    if (!this.shownFilename) return;
     const cmd = this.breakpointAt(line) ? "clear_break" : "set_break";
-    this.send({ cmd, filename: this.filename, line });
+    this.send({ cmd, filename: this.shownFilename, line });
   }
 
   /** The breakpoint set on `line` in the shown file, or undefined. */
   breakpointAt(line: number): Breakpoint | undefined {
-    return this.breakpoints.find((b) => b.line === line);
+    return this.shownBreakpoints.find((b) => b.line === line);
   }
 
   // Set (or update) a breakpoint with condition/temporary/ignore options. An
   // empty condition means unconditional; re-setting an existing line updates it.
   setBreak(line: number, opts: Omit<Breakpoint, "line"> = {}): void {
-    if (!this.filename) return;
+    if (!this.shownFilename) return;
     this.send({
       cmd: "set_break",
-      filename: this.filename,
+      filename: this.shownFilename,
       line,
       cond: opts.cond ?? null,
       temporary: opts.temporary ?? false,
@@ -274,7 +347,7 @@ class Connection {
 
   // Clear a breakpoint. Defaults to the shown file (the gutter); the breakpoints
   // pane passes an explicit filename to clear one in any file.
-  clearBreak(line: number, filename: string = this.filename): void {
+  clearBreak(line: number, filename: string = this.shownFilename): void {
     if (!filename) return;
     this.send({ cmd: "clear_break", filename, line });
   }
@@ -456,6 +529,27 @@ class Connection {
           error: msg.error,
         };
         break;
+      case "source": {
+        const asked = this.#pendingOpen.shift();
+        if (msg.error) {
+          // Unreadable path: say so and stay where we are, rather than swapping
+          // the pane to a blank document.
+          this.notice = msg.error;
+          break;
+        }
+        this.notice = null;
+        this.markedLine = asked?.line ?? 0;
+        // Asking for the frame's own file is a scroll, not a detour.
+        this.viewing =
+          msg.filename === this.filename
+            ? null
+            : {
+                filename: msg.filename,
+                source: msg.source,
+                breakpoints: msg.breakpoints,
+              };
+        break;
+      }
       case "watches":
         this.watchValues = msg.watches;
         break;
@@ -476,6 +570,9 @@ class Connection {
         // source pane is showing (a clear from the breakpoints pane may target
         // another file); the pane's own list always refreshes.
         if (msg.filename === this.filename) this.breakpoints = msg.breakpoints;
+        if (this.viewing?.filename === msg.filename) {
+          this.viewing.breakpoints = msg.breakpoints;
+        }
         this.allBreakpoints = msg.all_breakpoints;
         // Surface a rejected breakpoint as a dismissable notice; a successful
         // set/clear clears any lingering one.
@@ -491,8 +588,11 @@ class Connection {
   }
 
   // Point the source / location / variables panes at a frame (the innermost on
-  // pause, or the one just selected).
+  // pause, or the one just selected). Landing on a frame always ends browsing:
+  // where the debuggee *is* outranks what you were reading.
   #showFrame(view: FrameView): void {
+    this.viewing = null;
+    this.markedLine = 0;
     this.filename = view.filename;
     this.lineno = view.lineno;
     this.functionName = view.function;

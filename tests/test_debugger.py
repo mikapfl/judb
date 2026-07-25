@@ -12,6 +12,7 @@ All over the real websocket, without a browser. Four groups:
 """
 
 import asyncio
+import importlib
 import os
 import pty
 import signal
@@ -213,6 +214,102 @@ def test_expand_returns_repr_and_children():
             await ws.send_json({"cmd": "expand", "path": [["name", "nonexistent"]]})
             bad = await recv_type(ws, "expanded")
             assert "error" in bad
+
+            await ws.send_json({"cmd": "continue"})
+            await recv_type(ws, "running")
+
+    asyncio.run(flow())
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
+def test_open_file_then_break_in_a_file_not_yet_reached(tmp_path: Path):
+    """Open a file the debuggee has not run yet, break in it, and stop there.
+
+    This is the whole point of ``open_file``: without it the Source pane can
+    only show a file some frame is already in, so a breakpoint in code you have
+    not reached — the one you actually want — is unreachable.
+    """
+    module = tmp_path / "not_yet_imported.py"
+    module.write_text(
+        "def work(x):\n    doubled = x * 2\n    return doubled\n",
+        encoding="utf-8",
+    )
+
+    dbg = Debugger()
+    url = dbg.start_server(open_browser=False)
+
+    def debuggee() -> None:
+        sys.path.insert(0, str(tmp_path))
+        dbg.set_trace()
+        # By name: this module is written by the test at runtime, and nothing
+        # may touch it before the pause — that is the situation under test.
+        importlib.import_module("not_yet_imported").work(21)
+
+    thread = threading.Thread(target=debuggee)
+    thread.start()
+
+    async def flow() -> None:
+        async with ClientSession() as session, session.ws_connect(ws_url(url)) as ws:
+            paused = await recv_type(ws, "paused")
+            assert paused["filename"] != str(module)
+
+            # The browser asks for a file no frame is in; the reply carries its
+            # source and its (still empty) breakpoints.
+            await ws.send_json({"cmd": "open_file", "filename": str(module)})
+            src = await recv_type(ws, "source")
+            assert "error" not in src
+            assert "doubled = x * 2" in src["source"]
+            assert src["breakpoints"] == []
+
+            # Break in it, using the filename the reply spelled.
+            await ws.send_json(
+                {"cmd": "set_break", "filename": src["filename"], "line": 2}
+            )
+            bp = await recv_type(ws, "breakpoints")
+            assert [b["line"] for b in bp["breakpoints"]] == [2]
+
+            # Continue: the module is imported and called, and we stop there.
+            await ws.send_json({"cmd": "continue"})
+            await recv_type(ws, "running")
+            stopped = await recv_type(ws, "paused")
+            assert stopped["filename"] == src["filename"]
+            assert stopped["lineno"] == 2
+            assert stopped["function"] == "work"
+
+            # Clear it so the debuggee can run to completion.
+            await ws.send_json(
+                {"cmd": "clear_break", "filename": src["filename"], "line": 2}
+            )
+            await recv_type(ws, "breakpoints")
+            await ws.send_json({"cmd": "continue"})
+            await recv_type(ws, "running")
+
+    asyncio.run(flow())
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
+def test_open_file_reports_an_unreadable_path():
+    """A path that cannot be read comes back as an error on the `source` reply,
+    so the pane can say so instead of swapping to a blank document."""
+    dbg = Debugger()
+    url = dbg.start_server(open_browser=False)
+
+    def debuggee() -> None:
+        dbg.set_trace()
+        _ = 1
+
+    thread = threading.Thread(target=debuggee)
+    thread.start()
+
+    async def flow() -> None:
+        async with ClientSession() as session, session.ws_connect(ws_url(url)) as ws:
+            await recv_type(ws, "paused")
+            await ws.send_json({"cmd": "open_file", "filename": "/no/such/file.py"})
+            src = await recv_type(ws, "source")
+            assert src["source"] == ""
+            assert "Cannot read" in src["error"]
 
             await ws.send_json({"cmd": "continue"})
             await recv_type(ws, "running")

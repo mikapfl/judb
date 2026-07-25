@@ -315,3 +315,120 @@ describe("watch expressions", () => {
     ]);
   });
 });
+
+describe("source navigation", () => {
+  const pausedIn = (filename: string) => ({
+    type: "paused",
+    filename,
+    lineno: 7,
+    function: "f",
+    locals: [],
+    source: "a = 1\nb = 2\n",
+    breakpoints: [],
+    stack: [{ filename, lineno: 7, function: "f" }],
+    selected: 0,
+    all_breakpoints: [],
+  });
+
+  beforeEach(() => {
+    FakeWS.instances = [];
+    vi.stubGlobal("WebSocket", FakeWS);
+    conn.viewing = null;
+    conn.markedLine = 0;
+    conn.notice = null;
+    conn.connect();
+    FakeWS.instances[0].onopen?.();
+    deliverTo0(pausedIn("/proj/frame.py"));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    conn.viewing = null;
+    conn.markedLine = 0;
+    conn.notice = null;
+  });
+
+  function deliverTo0(msg: unknown) {
+    FakeWS.instances[0].onmessage?.({ data: JSON.stringify(msg) });
+  }
+
+  const sourceReply = (filename: string, extra: object = {}) => ({
+    type: "source",
+    filename,
+    source: "def work():\n    return 1\n",
+    breakpoints: [],
+    ...extra,
+  });
+
+  it("shows an opened file and sends breakpoints to *that* file", () => {
+    conn.openFile("/proj/other.py", 2);
+    deliverTo0(sourceReply("/proj/other.py"));
+
+    expect(conn.browsing).toBe(true);
+    expect(conn.shownFilename).toBe("/proj/other.py");
+    expect(conn.shownSource).toContain("def work");
+    expect(conn.markedLine).toBe(2);
+
+    // The gutter acts on the file on screen, not on the paused frame's.
+    conn.toggleBreak(2);
+    expect(FakeWS.instances[0].sent.at(-1)).toEqual({
+      cmd: "set_break",
+      filename: "/proj/other.py",
+      line: 2,
+    });
+
+    // ...and that file's `breakpoints` reply lands in the browsed view.
+    deliverTo0({
+      type: "breakpoints",
+      filename: "/proj/other.py",
+      breakpoints: [{ line: 2 }],
+      all_breakpoints: [{ filename: "/proj/other.py", line: 2 }],
+    });
+    expect(conn.shownBreakpoints).toEqual([{ line: 2 }]);
+    expect(conn.breakpoints).toEqual([]); // the frame's file is untouched
+  });
+
+  it("treats opening the frame's own file as a scroll, not a detour", () => {
+    conn.openFile("/proj/frame.py", 2);
+    deliverTo0(sourceReply("/proj/frame.py"));
+    expect(conn.browsing).toBe(false);
+    expect(conn.markedLine).toBe(2);
+  });
+
+  it("goes back to the frame, and lands there again on the next pause", () => {
+    conn.openFile("/proj/other.py", 2);
+    deliverTo0(sourceReply("/proj/other.py"));
+    conn.backToFrame();
+    expect(conn.browsing).toBe(false);
+    expect(conn.shownFilename).toBe("/proj/frame.py");
+
+    // A new pause always wins over browsing: where the debuggee *is* outranks
+    // what you were reading.
+    conn.openFile("/proj/other.py");
+    deliverTo0(sourceReply("/proj/other.py"));
+    expect(conn.browsing).toBe(true);
+    deliverTo0(pausedIn("/proj/frame.py"));
+    expect(conn.browsing).toBe(false);
+    expect(conn.markedLine).toBe(0);
+  });
+
+  it("reports an unreadable path and stays where it is", () => {
+    conn.openFile("/nope.py", 3);
+    deliverTo0(sourceReply("/nope.py", { source: "", error: "Cannot read /nope.py" }));
+    expect(conn.notice).toContain("Cannot read");
+    expect(conn.browsing).toBe(false);
+    expect(conn.shownFilename).toBe("/proj/frame.py");
+  });
+
+  it("offers the files it already knows as open suggestions", () => {
+    deliverTo0({
+      ...pausedIn("/proj/frame.py"),
+      stack: [
+        { filename: "/proj/main.py", lineno: 2, function: "main" },
+        { filename: "/proj/frame.py", lineno: 7, function: "f" },
+      ],
+      all_breakpoints: [{ filename: "/proj/lib.py", line: 4 }],
+    });
+    expect(conn.knownFiles).toEqual(["/proj/frame.py", "/proj/lib.py", "/proj/main.py"]);
+  });
+});

@@ -26,8 +26,11 @@ Phase-2a codebase. Same conventions: **[DECISION]** = recommended but open,
 > - **B3 ✅ done** (branch `watch-expressions`) — a Watch pane of pinned
 >   expressions, re-evaluated in the selected frame on every pause / frame
 >   change / cell run, with the list owned and persisted by the browser.
-> - **B4–B5 remain.** B4 still needs `open_file`; B5 (settings) is now more
->   valuable than it was, because a *user theme* has a real surface to bind to.
+> - **B4 ✅ done** (branch `open-file`) — `open_file` + a browse mode in the
+>   Source pane, so a breakpoint can be set in a file the debuggee has not
+>   reached yet; the Breakpoints and Exception panes navigate to it.
+> - **B5 remains** (settings) — now more valuable than it was, because a *user
+>   theme* has a real surface to bind to.
 
 Phase 2a gave us "something to show the world" — but only to someone sitting at a
 checkout running `make frontend` first. **Wave A makes it *reachable*** (a real
@@ -305,7 +308,7 @@ the difference is that a watch is *pinned* and *runs code*).
   disagreed with the UI). The server now folds `frame_selected` into the cached
   snapshot, as it already did for `breakpoints`.
 
-### B4. Multi-file source navigation — partly done (PR #4)
+### B4. Multi-file source navigation — ✅ Done
 
 Today the Source pane always shows the current/selected frame's file
 (`_frame_view` → `linecache.getlines`). Two levels of ambition:
@@ -320,17 +323,35 @@ Today the Source pane always shows the current/selected frame's file
   filename+lineno+function. That covers *within-stack* navigation; it does not
   need `open_file`, because every such file is already reachable via
   `select_frame`.
-- **Still open:** *click-to-open* a breakpoint's file from the pane, and an
-  `open_file(path)` → `source` message so you can view and set a breakpoint in a
-  not-yet-hit file before `continue` (source is read via `linecache`, so serving an
-  arbitrary project file is cheap). This is what unlocks the exit below. Note the
-  Exception pane already renders source for files that are *not* the selected
-  frame's, so `open_file` is the missing piece for making those views navigable,
-  not for reading them.
+- **✅ `open_file(path)` → `source`.** Read via `linecache` (so a not-yet-imported
+  module works — bdb reads breakpoint lines the same way) and answered with the
+  file's *canonical* name plus the breakpoints already in it, so the browser can
+  match it against `stack`/`breaks` by equality. An unreadable path comes back as
+  an `error` on the reply and surfaces as the dismissable notice, rather than
+  swapping the pane to a blank document.
+- **✅ Browse mode in the Source pane.** A `viewing` view in the store shadows the
+  frame's file; the gutter and *every* breakpoint command act on
+  `shownFilename`, so setting a breakpoint in a browsed file needs no separate
+  path. The pane grew a thin file bar: the file on screen, an *Open file…* input
+  (free-text — the file you haven't reached is by definition in no list — with a
+  datalist of the files judb already knows from the stack, breakpoints and
+  traceback), and, while browsing, a plain "not the paused frame" badge and a
+  *Back to frame* button.
+  **[DECISION] the current-line highlight stays honest:** while browsing, nothing
+  is executing in that file, so it is cleared and the navigated-to line gets its
+  own weaker marker (`setMarkedLine`). Landing on a frame — a new pause, or a
+  frame selection — always ends browsing.
+- **✅ Click-to-open.** A Breakpoints-pane row opens its own file at its line, and
+  an Exception-pane frame that has already *unwound* (a chained cause, which has
+  no frame to select) opens its file at the failing line — the navigability the
+  pane's rendered source was missing.
 - **[OPEN] Deferrable:** a file tree / fuzzy file-open. Nice, but scope-creep toward
-  an editor. Deferred to Phase 4; ship path-open next.
-- *Exit (not yet met):* set a breakpoint in a file the debuggee hasn't reached yet,
-  `continue`, and stop there.
+  an editor. Still deferred to Phase 4; path-open is shipped.
+- *Exit met:* set a breakpoint in a file the debuggee hasn't reached yet,
+  `continue`, and stop there — ws-tested end to end
+  (`test_open_file_then_break_in_a_file_not_yet_reached`) and again in Playwright
+  through the real UI (open by path → gutter → continue → paused in that file),
+  plus store vitest for browse mode and the breakpoint routing.
 
 ### B5. Settings / configuration
 
@@ -363,8 +384,10 @@ No config layer exists. Introduce a minimal one rather than a big framework.
   where `chain` is the structured traceback from `judb/tracebacks.py` (mirrored
   as `ExceptionInfo`/`ChainedException`/`TracebackFrame` in `protocol.ts`). ✅
   `set_watches` (client→server) and `watches` (server→client), mirrored as
-  `WatchValue`/`WatchesMsg`. Still to come: `open_file`. Mirror each in
-  `judb/protocol.py` **and** `frontend/src/protocol.ts`.
+  `WatchValue`/`WatchesMsg`. ✅ `open_file` (client→server) and `source`
+  (server→client, mirrored as `SourceMsg`). The additive protocol deltas Wave B
+  planned are complete. Mirror each in `judb/protocol.py` **and**
+  `frontend/src/protocol.ts`.
 - **Tests:** every backend command gets a Python ws test (extend
   `tests/test_debugger.py` or `tests/test_entrypoints.py`); the exception-pause and
   conditional-bp paths get Playwright coverage. Keep `make test` + `make

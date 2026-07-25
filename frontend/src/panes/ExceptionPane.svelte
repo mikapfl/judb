@@ -98,8 +98,10 @@
           {#each entry.frames as frame, j (j)}
             {@const index = stackIndex(frame)}
             <div class="frame">
-              <!-- A frame still on the stack is a button that selects it; one
-                   that has already unwound is inert text. -->
+              <!-- A frame still on the stack is a button that selects it. One
+                   that has already unwound (a chained cause) has no frame to
+                   select, but its *file* is still there — so it opens that file
+                   in the Source pane at the failing line. -->
               {#if index >= 0}
                 <button
                   class="frame-loc selectable"
@@ -111,9 +113,14 @@
                   {@render location(frame)}
                 </button>
               {:else}
-                <div class="frame-loc" title={frame.filename}>
+                <button
+                  class="frame-loc selectable"
+                  title={`${frame.filename} — click to open this file (the frame has unwound)`}
+                  disabled={!conn.paused}
+                  onclick={() => conn.openFile(frame.filename, frame.lineno)}
+                >
                   {@render location(frame)}
-                </div>
+                </button>
               {/if}
               {#each rows(frame) as row (row.lineno)}
                 <div class="row" class:current={row.current}>
