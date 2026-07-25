@@ -5,6 +5,7 @@
   import SourcePane from "./panes/SourcePane.svelte";
   import ConsolePane from "./panes/ConsolePane.svelte";
   import VariablesPane from "./panes/VariablesPane.svelte";
+  import WatchPane from "./panes/WatchPane.svelte";
   import StackPane from "./panes/StackPane.svelte";
   import BreakpointsPane from "./panes/BreakpointsPane.svelte";
   import ExceptionPane from "./panes/ExceptionPane.svelte";
@@ -68,10 +69,22 @@
             <StackPane />
           </PaneBox>
         </Pane>
+        <!-- Variables and Watch share a column: both answer "what is this value
+             right now", the difference being that a watch is an expression the
+             user pinned (and it runs code), a local is just there. -->
         <Pane size={34} minSize={15}>
-          <PaneBox title="Variables">
-            <VariablesPane />
-          </PaneBox>
+          <Splitpanes horizontal theme="" class="judb-split">
+            <Pane size={60} minSize={20}>
+              <PaneBox title="Variables">
+                <VariablesPane />
+              </PaneBox>
+            </Pane>
+            <Pane size={40} minSize={15}>
+              <PaneBox title="Watch">
+                <WatchPane />
+              </PaneBox>
+            </Pane>
+          </Splitpanes>
         </Pane>
         <Pane size={22} minSize={10}>
           <PaneBox title="Exception">

@@ -15,6 +15,7 @@ import type {
   StackFrame,
   VarChild,
   VarPath,
+  WatchValue,
 } from "../protocol";
 
 export type Status =
@@ -47,6 +48,21 @@ export interface ExpandState {
  *  genuinely dead server is not hammered. */
 const RETRY_MIN_MS = 250;
 const RETRY_MAX_MS = 5000;
+
+/** Where the watch list is persisted. The *browser* owns the list — the backend
+ *  only holds whatever it was last told — so it survives a refresh, and a fresh
+ *  run of the same debuggee comes up watching the same expressions. */
+const WATCHES_KEY = "judb-watches";
+
+function loadWatches(): string[] {
+  try {
+    const raw = localStorage.getItem(WATCHES_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? parsed.filter((e) => typeof e === "string") : [];
+  } catch {
+    return []; // absent, malformed, or localStorage unavailable — start empty.
+  }
+}
 
 class Connection {
   status = $state<Status>("connecting");
@@ -82,6 +98,13 @@ class Connection {
   // Lazily-fetched variable subtrees, keyed by JSON.stringify(path). Cleared
   // whenever the targeted frame changes, since locals differ per frame.
   expanded = $state<Record<string, ExpandState>>({});
+  // Watch expressions the user pinned, and their values in the selected frame.
+  // The list is ours (persisted, re-sent on connect); the values come from the
+  // backend, which re-evaluates them on every pause, frame change and cell run.
+  // Values are index-aligned with `watches`, but lag it while a round-trip is
+  // in flight, so a row matches its value on `expr` (see `watchValue`).
+  watches = $state<string[]>(loadWatches());
+  watchValues = $state<WatchValue[]>([]);
 
   #ws: WebSocket | null = null;
   // Reconnect backoff state (see `#scheduleReconnect`).
@@ -131,6 +154,11 @@ class Connection {
       // The server replays the current state to a reconnecting client, so the
       // panes refill on their own; just reset the backoff.
       this.#retryDelay = RETRY_MIN_MS;
+      // The watch list lives here, not on the backend, so hand it over: this
+      // covers a refresh, a reconnect, *and* a brand-new debuggee that has
+      // never heard of these expressions. Answered with a `watches` message
+      // (once the debuggee is paused), which refills the values.
+      if (this.watches.length > 0) this.#sendWatches();
     };
     ws.onclose = () => {
       // `finished` means the debuggee is gone for good — nothing to come back
@@ -306,6 +334,65 @@ class Connection {
     return this.expanded[JSON.stringify(path)];
   }
 
+  // --- watch expressions ----------------------------------------------
+  //
+  // Expressions the user pinned, re-evaluated by the backend in the selected
+  // frame on every pause / frame change / cell run. Unlike the Variables tree
+  // (which only reads real objects), a watch *runs user code* — that's the
+  // point of it, and why the list is explicit rather than inferred.
+
+  /** Append an expression (ignoring blanks and exact duplicates). */
+  addWatch(expr: string): void {
+    const trimmed = expr.trim();
+    if (!trimmed || this.watches.includes(trimmed)) return;
+    this.watches.push(trimmed);
+    this.#syncWatches();
+  }
+
+  /** Replace the expression at `index`; an emptied one is removed. */
+  setWatch(index: number, expr: string): void {
+    if (index < 0 || index >= this.watches.length) return;
+    const trimmed = expr.trim();
+    if (trimmed === this.watches[index]) return;
+    // Emptying a row deletes it; editing it into a duplicate of another row
+    // collapses the two (rows are keyed by expression, so they must be unique).
+    if (!trimmed || this.watches.includes(trimmed)) {
+      this.removeWatch(index);
+      return;
+    }
+    this.watches[index] = trimmed;
+    this.#syncWatches();
+  }
+
+  removeWatch(index: number): void {
+    if (index < 0 || index >= this.watches.length) return;
+    this.watches.splice(index, 1);
+    this.#syncWatches();
+  }
+
+  /** The value for the row at `index`, or undefined while it is in flight.
+   *  Matched on the expression so a just-edited row shows "…" instead of the
+   *  previous expression's value. */
+  watchValue(index: number): WatchValue | undefined {
+    const value = this.watchValues[index];
+    return value?.expr === this.watches[index] ? value : undefined;
+  }
+
+  /** Persist the list and tell the backend. Sending the whole list (rather than
+   *  add/remove deltas) keeps the two ends trivially in sync. */
+  #sendWatches(): void {
+    this.send({ cmd: "set_watches", exprs: [...this.watches] });
+  }
+
+  #syncWatches(): void {
+    try {
+      localStorage.setItem(WATCHES_KEY, JSON.stringify(this.watches));
+    } catch {
+      // best-effort persistence (private mode / sandboxed iframe)
+    }
+    this.#sendWatches();
+  }
+
   // --- tab completion -------------------------------------------------
   //
   // Resolves with the backend's `completions` reply. If the debuggee is not
@@ -368,6 +455,9 @@ class Connection {
           children: msg.children,
           error: msg.error,
         };
+        break;
+      case "watches":
+        this.watchValues = msg.watches;
         break;
       case "completions":
         this.#pendingCompletions.shift()?.(msg);

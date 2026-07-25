@@ -386,8 +386,13 @@ with clickable frames that select the frame. Its lasting architectural outcome i
 that **the backend ships traceback *structure*, never colour** (`judb/tracebacks.py`)
 and the browser highlights it with the editors' own palette — so every view of
 Python in the UI is themed from one set of CSS custom properties, which is what a
-user-supplied theme will bind to. Still ahead in Wave B: watch expressions,
-multi-file *navigation* (`open_file`), and a minimal settings layer.
+user-supplied theme will bind to. B3 — **watch expressions** — is **shipped**: a
+**Watch** pane of pinned expressions, re-evaluated in the selected frame on every
+pause, frame change and cell run, rendered with the same display formatter as the
+Variables tree; the *list* is owned and persisted by the browser, which re-sends
+it on every connect (so a refresh, a reconnect and the next run of the same
+program all work through one path, with no settings layer). Still ahead in Wave
+B: multi-file *navigation* (`open_file`), and a minimal settings layer.
 
 **Phase 3a – saved debug expressions.** Add a way to save + load cell sources
 close to the source, so repeated debugging can re-use cells. Things to consider

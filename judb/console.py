@@ -373,6 +373,40 @@ class Console:
         # one `replace_from` (all CodeMirror wants) is exact.
         return comps[0].start, [c.text for c in comps]
 
+    # --- watch expressions -------------------------------------------------
+
+    def watch(self, frame: FrameType, expr: str) -> dict[str, Any]:
+        """Evaluate ``expr`` in ``frame``'s namespace and format the result.
+
+        Unlike :meth:`inspect` — which only ever *reads* the frame's real
+        objects — a watch evaluates an arbitrary expression, so it **can run
+        user code** (a ``@property``, ``__getitem__``, a call). That is the
+        point of a watch and is accepted deliberately; the caller is
+        responsible for guarding each expression's failure (see
+        ``Debugger._watch_value``).
+
+        The expression sees exactly the frame's globals and locals — not the
+        console's scratch namespace — so a watch means the same thing whether or
+        not a cell has been run, and re-targets cleanly when another frame is
+        selected. The result is formatted with the shell's display formatter,
+        so a watched DataFrame carries its HTML table just like the Variables
+        tree does.
+
+        Parameters
+        ----------
+        frame
+            The frame whose namespace the expression is evaluated in.
+        expr
+            The Python expression to evaluate.
+
+        Returns
+        -------
+        ``{"repr": <mime bundle>, "summary": <one-line repr>}``.
+        """
+        code = compile(expr, "<judb watch>", "eval")
+        value = eval(code, frame.f_globals, frame.f_locals)
+        return {"repr": self._format(value), "summary": self._short_repr(value)}
+
     # --- lazy variable inspection -----------------------------------------
 
     def inspect(self, frame: FrameType, path: list[Any]) -> dict[str, Any]:

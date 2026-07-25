@@ -19,9 +19,9 @@ are; its §5 defines the phases and each phase's exit criterion.
 judb` works; entry points `python -m judb`, `pytest --pdbcls`, and `set_trace` all
 land in the browser UI). Wave B (deepen the debugger) is the current focus; see
 `docs/PHASE3_PLAN.md`. Within it, **B1 (conditional/temporary/ignore breakpoints
-+ the Breakpoints pane) and B2 (break-on-exception → post-mortem + the Exception
-pane) are done**; watch expressions (B3), multi-file `open_file` navigation (B4),
-and settings (B5) remain. Phase 2 (four-pane app, the MVP) is complete. Phase 1
++ the Breakpoints pane), B2 (break-on-exception → post-mortem + the Exception
+pane) and B3 (watch expressions + the Watch pane) are done**; multi-file
+`open_file` navigation (B4) and settings (B5) remain. Phase 2 (four-pane app, the MVP) is complete. Phase 1
 (vertical slice) is complete: `judb.set_trace()` starts a localhost websocket server
 (`judb/server.py`) and opens a browser page served from `judb/static/index.html`.
 That page is now the **built Svelte SPA** (source in `frontend/`, see below), not
@@ -100,8 +100,8 @@ Files are named for **what they cover**, not the phase that introduced them:
 - `test_server.py` — websocket transport + token auth, and the whole stack over
   one socket (pause → plot in-frame → PNG → continue).
 - `test_debugger.py` — driving a paused debuggee: frames (`select_frame`,
-  `expand`, `complete`), breakpoints, interrupts, and signals (a real terminal
-  Ctrl+C over a pty).
+  `expand`, `complete`), watches, breakpoints, interrupts, and signals (a real
+  terminal Ctrl+C over a pty).
 - `test_entrypoints.py` — how users start judb: `pytest --pdbcls` (post-mortem,
   `--trace`, `breakpoint()`), `python -m judb` (script and `-m module`), and
   `set_trace` hardening.
@@ -152,12 +152,17 @@ debuggee and (eventually) the web server:
   it resolves a `["name",…]`/attr/item/index path against the frame's *real* objects
   (never running user code) and returns the value's mime-bundle repr (via the shell's
   display formatter, so a DataFrame → HTML table) plus one level of children.
+  `watch(frame, expr)` is the deliberate exception: a watch *evaluates* an
+  expression in the frame's own globals/locals, so it **can** run user code —
+  that's the point of a watch, and why the debugger guards each one separately.
 - **`judb/debugger.py`** — a `bdb.Bdb` subclass whose interaction loop is
   **driven by queues** rather than urwid keypresses (pudb's model otherwise). On
   stopping, the debuggee thread enters `interaction()`, emits a `paused` message on
   `outbound`, and blocks on `inbound.get()`. `execute_cell` runs a console cell
-  against the paused frame; `select_frame`/`expand`/`complete` retarget/inspect/
-  complete against the *selected* frame (`self._frames[self._selected]`);
+  against the paused frame; `select_frame`/`expand`/`complete`/`set_watches`
+  retarget/inspect/complete/watch against the *selected* frame
+  (`self._frames[self._selected]`, so watches re-evaluate on every pause, frame
+  change and cell run);
   `step`/`next`/`continue`/`return`/`quit` set bdb state and *return* from the loop
   to unblock the debuggee.
 - **`judb/protocol.py`** — `Output`/`CellResult` dataclasses. Outputs deliberately
@@ -181,7 +186,10 @@ debuggee and (eventually) the web server:
   The Variables pane is a recursive `panes/VarNode.svelte` tree over an `expand`
   cache in the store (keyed by path, cleared on frame change); console cells get
   tab-completion via an async CodeMirror source backed by `conn.complete()` (a
-  FIFO-correlated `complete`→`completions` round-trip). The backend contract is
+  FIFO-correlated `complete`→`completions` round-trip). `panes/WatchPane.svelte`
+  owns the watch *list* (persisted to `localStorage`, re-sent whole on every
+  connect — the backend holds only what it was last told, so the two can't
+  desync); the values come back on `watches`. The backend contract is
   unchanged: same queues, same mime bundles.
 
 ### Three invariants that are easy to break

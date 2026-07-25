@@ -23,7 +23,10 @@ Phase-2a codebase. Same conventions: **[DECISION]** = recommended but open,
 >   invariant (see B2's *[DECISION] structure, never colour*, and `CLAUDE.md`
 >   "Three invariants"). Traceback frames are clickable, which is the first half
 >   of B4's navigation story.
-> - **B3–B5 remain.** B4 still needs `open_file`; B5 (settings) is now more
+> - **B3 ✅ done** (branch `watch-expressions`) — a Watch pane of pinned
+>   expressions, re-evaluated in the selected frame on every pause / frame
+>   change / cell run, with the list owned and persisted by the browser.
+> - **B4–B5 remain.** B4 still needs `open_file`; B5 (settings) is now more
 >   valuable than it was, because a *user theme* has a real surface to bind to.
 
 Phase 2a gave us "something to show the world" — but only to someone sitting at a
@@ -266,23 +269,41 @@ enters `interaction(None, exc)`); this wave wired the same landing into
   is now the single entry point for ANSI and escapes first (shipped in 0.1.0 —
   hence a `fixed` fragment of its own).
 
-### B3. Watch expressions
+### B3. Watch expressions — ✅ Done
 
-A pane (or a section of Variables) of user-entered expressions, re-evaluated in the
-selected frame on every pause and after each cell run.
+A **Watch** pane of user-entered expressions, re-evaluated in the selected frame.
+It shares a column with Variables (both answer "what is this value right now";
+the difference is that a watch is *pinned* and *runs code*).
 
-- Backend: a `set_watches(list[str])` command + a `watches` result message that
-  reuses `Console.inspect`/the display formatter to return a mime-bundle repr per
-  expression (so a watched DataFrame shows its HTML table, matching Variables). Runs
-  on the debuggee thread like `expand`, against `self._frames[self._selected]`.
-- **Invariant to respect:** watches evaluate expressions, which *can run user code*
-  (a `@property`, `__repr__`). That's acceptable for an explicit watch (unlike the
-  Variables tree, which deliberately never runs user code) — but document it and
-  guard failures per-expression (one bad watch must not blank the pane).
-- Frontend: a small editable list; re-request on `paused`/`frame_selected`/
-  `cell_result`. Persist the watch list across pauses (and consider persisting it
-  like Phase 3a cells).
-- *Exit:* add `df.shape` as a watch; step; the pane updates each stop.
+- **Backend.** A `set_watches(exprs)` command and a `watches` message
+  (`{expr, repr, summary}` or `{expr, error}` per row). `Console.watch` evaluates
+  the expression in the frame's own globals/locals — deliberately *not* the
+  console's scratch namespace, so a watch means the same thing whether or not a
+  cell has been run — and formats the value with the shell's display formatter,
+  the same one the Variables tree uses (a watched DataFrame carries its HTML
+  table). The debugger re-emits `watches` on its own after every pause,
+  `select_frame`, and `execute_cell`; when nothing is watched the ordinary pause
+  path costs nothing.
+- **The invariant, as planned:** watches *do* run user code, unlike the Variables
+  tree. Failures are caught per expression (a name that isn't in *this* frame is
+  normal while stepping and must not blank the pane), and evaluation is marked as
+  an interruptible window (`_executing`) — otherwise a watch stuck in a loop
+  would wedge the debugger with no way to remove it, since the wedged thread is
+  the one that would have to process the removal.
+- **[DECISION] the browser owns the list.** It persists to `localStorage` and
+  re-sends the whole list on every connect; the backend only holds what it was
+  last told. That makes reconnect, refresh, *and* the next run of the same
+  program all work through one path, with no settings layer and no bidirectional
+  sync (cf. B5) — and it is the natural warm-up for Phase 3a's saved cells.
+- *Exit met:* watch `scale * 10`, step / select another frame, and the pane
+  follows — ws-tested (`test_watches_evaluate_in_the_selected_frame`,
+  `test_watches_refresh_on_every_pause`), plus store vitest and a Playwright test
+  covering frame retargeting, per-row errors, and survival of a reload.
+- **Bug found on the way:** the reconnect replay rebuilt the *pause* snapshot, so
+  a refresh after selecting a frame came back showing the innermost frame while
+  the backend still targeted the selected one (cells and inspection silently
+  disagreed with the UI). The server now folds `frame_selected` into the cached
+  snapshot, as it already did for `breakpoints`.
 
 ### B4. Multi-file source navigation — partly done (PR #4)
 
@@ -340,8 +361,9 @@ No config layer exists. Introduce a minimal one rather than a big framework.
   `cond`/`temporary`/`ignore` and `paused`/`breakpoints` gained `all_breakpoints`
   (PR #4). ✅ `paused` gained an optional `exception` — `{type, message, chain}`,
   where `chain` is the structured traceback from `judb/tracebacks.py` (mirrored
-  as `ExceptionInfo`/`ChainedException`/`TracebackFrame` in `protocol.ts`). Still
-  to come: `set_watches`, `open_file`; server→client `watches`. Mirror each in
+  as `ExceptionInfo`/`ChainedException`/`TracebackFrame` in `protocol.ts`). ✅
+  `set_watches` (client→server) and `watches` (server→client), mirrored as
+  `WatchValue`/`WatchesMsg`. Still to come: `open_file`. Mirror each in
   `judb/protocol.py` **and** `frontend/src/protocol.ts`.
 - **Tests:** every backend command gets a Python ws test (extend
   `tests/test_debugger.py` or `tests/test_entrypoints.py`); the exception-pause and

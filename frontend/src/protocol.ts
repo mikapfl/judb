@@ -165,6 +165,27 @@ export interface ExpandedMsg {
   error?: string;
 }
 
+/** One watch expression's current value in the selected frame. Either it
+ *  evaluated (`repr`/`summary`) or it didn't (`error`) — a watch that names
+ *  something out of scope in this frame is normal while stepping. */
+export interface WatchValue {
+  /** The expression, echoed back so the pane can match it to its row. */
+  expr: string;
+  /** The value's mime bundle (a watched DataFrame carries its HTML table). */
+  repr?: MimeBundle;
+  /** A one-line `type  repr` summary, as in the Variables tree. */
+  summary?: string;
+  /** Why it could not be evaluated, e.g. `"NameError: name 'df' is not defined"`. */
+  error?: string;
+}
+
+/** Reply to `set_watches`, and pushed on its own whenever the values may have
+ *  changed: a new pause, a frame selection, or a console cell run. */
+export interface WatchesMsg {
+  type: "watches";
+  watches: WatchValue[];
+}
+
 /** Reply to `complete`: `matches` are full replacements for the doc range
  *  `[from, cursor)` (absolute offsets), the shape CodeMirror autocomplete wants. */
 export interface CompletionsMsg {
@@ -209,6 +230,7 @@ export type ServerMsg =
   | FinishedMsg
   | CellResultMsg
   | ExpandedMsg
+  | WatchesMsg
   | CompletionsMsg
   | BreakpointsMsg
   | MplMsg
@@ -225,6 +247,8 @@ export type Command =
   | { cmd: "execute_cell"; code: string }
   | { cmd: "select_frame"; index: number }
   | { cmd: "expand"; path: VarPath }
+  /** The full watch list (the browser owns it and always sends it whole). */
+  | { cmd: "set_watches"; exprs: string[] }
   | { cmd: "complete"; code: string; cursor: number }
   | {
       cmd: "set_break";
