@@ -215,6 +215,12 @@ enters `interaction(None, exc)`); this wave wired the same landing into
   exception type, message, and traceback whenever a pause is post-mortem, and
   stays empty otherwise. The store tracks `exception`/`postmortem` (set on
   `paused`, cleared on resume). `ExceptionInfo` mirrored into `protocol.ts`.
+  A traceback frame that is still on the stack is a button that calls
+  `selectFrame` — the pane matches it to a `stack` entry on
+  filename+lineno+function rather than trusting index alignment, which is why
+  `format_traceback` takes `Bdb.canonic` (both sides must spell the file the
+  same way). Frames from a chained *cause* have unwound, match nothing, and stay
+  inert.
 - **[DECISION] the backend ships traceback *structure*, never colour.**
   `judb/tracebacks.py` turns an exception into a JSON chain (oldest cause first;
   per frame: file, line, function, a source window, and 3.11+ anchor columns)

@@ -1,5 +1,5 @@
 import { render } from "@testing-library/svelte";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import ExceptionPane from "./ExceptionPane.svelte";
 import { conn } from "../lib/connection.svelte";
 import type { ExceptionInfo } from "../protocol";
@@ -27,6 +27,12 @@ const ZERO_DIV: ExceptionInfo = {
 };
 
 describe("ExceptionPane component", () => {
+  beforeEach(() => {
+    conn.status = "paused"; // frame headers only act while the debuggee is paused
+    conn.stack = [];
+    conn.selected = 0;
+  });
+
   it("renders 'No exception.' when conn.exception is null", () => {
     conn.exception = null;
     const { container } = render(ExceptionPane);
@@ -105,5 +111,36 @@ describe("ExceptionPane component", () => {
     expect(relations).toEqual([
       "The above exception was the direct cause of the following exception:",
     ]);
+  });
+
+  it("makes a frame that is still on the stack selectable", async () => {
+    conn.exception = ZERO_DIV;
+    conn.stack = [
+      { filename: "/tmp/demo/crash.py", lineno: 9, function: "main" },
+      { filename: "/tmp/demo/crash.py", lineno: 3, function: "divide" },
+    ];
+    conn.selected = 1;
+    const selectFrame = vi.spyOn(conn, "selectFrame").mockImplementation(() => {});
+
+    const { container } = render(ExceptionPane);
+    const button = container.querySelector<HTMLButtonElement>("button.frame-loc");
+    expect(button?.textContent).toContain("crash.py:3");
+    // It is the selected frame, so it reads as such.
+    expect(button?.classList.contains("selected")).toBe(true);
+
+    button?.click();
+    expect(selectFrame).toHaveBeenCalledWith(1);
+    selectFrame.mockRestore();
+  });
+
+  it("leaves a frame that has already unwound inert", () => {
+    conn.exception = ZERO_DIV;
+    // Nothing in the stack matches (a chained cause, or a stale traceback).
+    conn.stack = [{ filename: "/tmp/demo/other.py", lineno: 3, function: "divide" }];
+    const { container } = render(ExceptionPane);
+    expect(container.querySelector("button.frame-loc")).toBeNull();
+    expect(container.querySelector("div.frame-loc")?.textContent).toContain(
+      "crash.py:3",
+    );
   });
 });

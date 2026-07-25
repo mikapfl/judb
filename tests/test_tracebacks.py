@@ -15,12 +15,14 @@ from typing import Any
 from judb.tracebacks import format_traceback
 
 
-def chain_from(fn: Callable[[], object]) -> list[dict[str, Any]]:
+def chain_from(
+    fn: Callable[[], object], canonic: Callable[[str], str] | None = None
+) -> list[dict[str, Any]]:
     """Run ``fn``, which must raise, and return the formatted chain."""
     try:
         fn()
     except BaseException as exc:  # noqa: BLE001 — the exception *is* the fixture
-        return format_traceback(exc)
+        return format_traceback(exc, canonic)
     raise AssertionError(f"{fn} should have raised")
 
 
@@ -46,6 +48,19 @@ def test_chain_describes_the_failing_frame():
     assert 'raise ValueError("kaboom")' in "\n".join(frame["lines"])
     assert frame["first_lineno"] <= frame["lineno"]
     assert frame["lineno"] < frame["first_lineno"] + len(frame["lines"])
+
+
+def test_canonic_spells_filenames_like_the_stack_message():
+    """The pane matches traceback frames to live stack frames by filename, so
+    both sides must spell it the same way — hence the `canonic` hook. Source is
+    still read under the *original* name, the one linecache knows."""
+    marker = "/canonicalised/crash.py"
+
+    (entry,) = chain_from(_boom, canonic=lambda _name: marker)
+
+    frame = entry["frames"][-1]
+    assert frame["filename"] == marker
+    assert 'raise ValueError("kaboom")' in "\n".join(frame["lines"])
 
 
 def test_no_ansi_anywhere():

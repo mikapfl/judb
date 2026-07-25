@@ -402,7 +402,9 @@ class Debugger(bdb.Bdb):
                 # Structure, not colour: the Exception pane highlights these
                 # source lines with the same CodeMirror theme as the Source pane,
                 # so a theme switch recolours tracebacks too (see tracebacks.py).
-                "chain": format_traceback(self._exc),
+                # `canonic` spells filenames the way `stack` does, so the pane can
+                # match a traceback frame to a live frame and offer to select it.
+                "chain": format_traceback(self._exc, self.canonic),
             }
         self._emit(message)
 

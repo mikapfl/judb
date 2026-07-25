@@ -14,6 +14,7 @@ colour opinion of its own, and works on any exception.
 
 import linecache
 import traceback
+from collections.abc import Callable
 from typing import Any
 
 #: Source lines shown before / after the failing line of each traceback frame.
@@ -24,7 +25,9 @@ CONTEXT_BEFORE = 2
 CONTEXT_AFTER = 1
 
 
-def format_traceback(exc: BaseException) -> list[dict[str, Any]]:
+def format_traceback(
+    exc: BaseException, canonic: Callable[[str], str] | None = None
+) -> list[dict[str, Any]]:
     """Describe ``exc`` and its chained causes as plain, JSON-ready dicts.
 
     The result is the exception *chain* in the order Python prints it: the
@@ -44,6 +47,12 @@ def format_traceback(exc: BaseException) -> list[dict[str, Any]]:
     ----------
     exc
         The exception to describe; its ``__traceback__`` supplies the frames.
+    canonic
+        Optional filename normaliser (``bdb.Bdb.canonic``). Pass it so a frame's
+        ``filename`` is spelled exactly as the ``stack``/``paused`` messages
+        spell it — that is what lets the pane recognise a traceback frame as a
+        live stack frame and make it selectable. Source is still read under the
+        original name, which is the one ``linecache`` knows.
 
     Returns
     -------
@@ -52,12 +61,14 @@ def format_traceback(exc: BaseException) -> list[dict[str, Any]]:
     """
     try:
         te = traceback.TracebackException.from_exception(exc, lookup_lines=True)
-        return _chain(te)
+        return _chain(te, canonic or (lambda name: name))
     except Exception:  # noqa: BLE001 — a broken repr must not cost us the pause
         return [{"type": type(exc).__name__, "headline": [str(exc)], "frames": []}]
 
 
-def _chain(te: traceback.TracebackException) -> list[dict[str, Any]]:
+def _chain(
+    te: traceback.TracebackException, canonic: Callable[[str], str]
+) -> list[dict[str, Any]]:
     """Walk ``te``'s cause/context links and return the chain oldest-first."""
     entries: list[dict[str, Any]] = []
     seen: set[int] = set()
@@ -73,7 +84,7 @@ def _chain(te: traceback.TracebackException) -> list[dict[str, Any]]:
         entry: dict[str, Any] = {
             "type": te.exc_type_str,
             "headline": "".join(te.format_exception_only()).splitlines(),
-            "frames": [_frame(fs) for fs in te.stack],
+            "frames": [_frame(fs, canonic) for fs in te.stack],
         }
         # `relation` describes how *this* entry follows the one printed before
         # it, which — walking backwards — is the entry we are about to visit.
@@ -87,7 +98,7 @@ def _chain(te: traceback.TracebackException) -> list[dict[str, Any]]:
     return entries
 
 
-def _frame(fs: traceback.FrameSummary) -> dict[str, Any]:
+def _frame(fs: traceback.FrameSummary, canonic: Callable[[str], str]) -> dict[str, Any]:
     """One traceback frame plus a window of the source around its failing line."""
     lineno = fs.lineno or 0
     # checkcache first: a long-running debuggee may have edited the file since
@@ -109,7 +120,7 @@ def _frame(fs: traceback.FrameSummary) -> dict[str, Any]:
         lines = [fs.line] if fs.line else []
 
     frame: dict[str, Any] = {
-        "filename": fs.filename,
+        "filename": canonic(fs.filename),
         "lineno": lineno,
         "function": fs.name,
         "lines": lines,

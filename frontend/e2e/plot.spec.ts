@@ -370,6 +370,18 @@ test("post-mortem: the exception pane shows the crash after continue", async ({ 
     const color = (l: typeof tbKeyword) =>
       l.evaluate((n) => getComputedStyle(n).color);
     expect(await color(tbKeyword)).toBe(await color(srcKeyword));
+
+    // Frames still on the stack are selectable from the traceback itself, just
+    // like the call-stack pane: click `main` and the variables retarget to it.
+    // (This only works because the backend spells traceback filenames with
+    // `Bdb.canonic`, exactly as the `stack` message does.)
+    await expect(page.locator(".vars")).toContainText("rows");
+    await page.locator(".exc-tb button.frame-loc", { hasText: "in main" }).click();
+    await expect(page.locator(".vars")).toContainText("data");
+    await expect(page.locator(".vars")).not.toContainText("rows");
+    await expect(
+      page.locator(".exc-tb button.frame-loc.selected"),
+    ).toContainText("in main");
   } finally {
     if (proc.exitCode === null) proc.kill("SIGKILL");
   }

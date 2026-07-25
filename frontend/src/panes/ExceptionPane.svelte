@@ -51,7 +51,34 @@
 
   /** Basename for display; the full path stays in the `title`. */
   const basename = (path: string) => path.split(/[\\/]/).pop() || path;
+
+  /**
+   * Where this traceback frame sits in the live call stack, or -1.
+   *
+   * A post-mortem stack *is* the raised exception's traceback, so its frames are
+   * selectable: clicking one retargets source / variables / console, exactly as
+   * the call-stack pane does. Frames from a chained *cause* have already unwound
+   * and match nothing, so they simply stay unclickable. Matching on all three
+   * fields (rather than trusting index alignment) keeps this honest whichever
+   * entry of the chain a frame came from — the backend spells `filename` with
+   * `Bdb.canonic`, the same as `stack`, so the comparison is exact.
+   */
+  function stackIndex(frame: TracebackFrame): number {
+    return conn.stack.findIndex(
+      (f) =>
+        f.filename === frame.filename &&
+        f.lineno === frame.lineno &&
+        f.function === frame.function,
+    );
+  }
 </script>
+
+<!-- `file.py:12 in func`, the same shorthand the call stack uses; the full path
+     stays in the tooltip, since the pane is narrow. -->
+{#snippet location(frame: TracebackFrame)}
+  <span class="file">{basename(frame.filename)}:{frame.lineno}</span>
+  in <span class="fn">{frame.function}</span>
+{/snippet}
 
 <div class="exception">
   {#if conn.exception}
@@ -69,13 +96,25 @@
             <p class="tb-intro">Traceback (most recent call last):</p>
           {/if}
           {#each entry.frames as frame, j (j)}
+            {@const index = stackIndex(frame)}
             <div class="frame">
-              <!-- `file.py:12 in func`, the same shorthand the call stack uses;
-                   the full path stays in the tooltip since the pane is narrow. -->
-              <div class="frame-loc" title={frame.filename}>
-                <span class="file">{basename(frame.filename)}:{frame.lineno}</span>
-                in <span class="fn">{frame.function}</span>
-              </div>
+              <!-- A frame still on the stack is a button that selects it; one
+                   that has already unwound is inert text. -->
+              {#if index >= 0}
+                <button
+                  class="frame-loc selectable"
+                  class:selected={index === conn.selected}
+                  title={`${frame.filename} — click to select this frame`}
+                  disabled={!conn.paused}
+                  onclick={() => conn.selectFrame(index)}
+                >
+                  {@render location(frame)}
+                </button>
+              {:else}
+                <div class="frame-loc" title={frame.filename}>
+                  {@render location(frame)}
+                </div>
+              {/if}
               {#each rows(frame) as row (row.lineno)}
                 <div class="row" class:current={row.current}>
                   <span class="gutter">{row.lineno}</span>
@@ -143,9 +182,31 @@
   .frame {
     margin-bottom: 0.35rem;
   }
+  /* A frame header is a `div` when the frame has unwound and a `button` when it
+     is still selectable, so strip the button chrome and share one look. */
   .frame-loc {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 0 0.2rem;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    font: inherit;
     color: var(--fg-dim);
-    padding-left: 0.2rem;
+    cursor: default;
+  }
+  .frame-loc.selectable {
+    cursor: pointer;
+  }
+  .frame-loc.selectable:hover:not(:disabled) {
+    background: var(--bg-raised);
+  }
+  .frame-loc.selected {
+    background: var(--accent-bg);
+  }
+  .frame-loc:disabled {
+    opacity: 1; /* the global button rule dims disabled buttons; not here */
   }
   .frame-loc .file {
     color: var(--fg);
