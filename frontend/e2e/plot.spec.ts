@@ -409,6 +409,55 @@ test("clicking an outer stack frame retargets the variables pane", async ({ page
   }
 });
 
+test("watch expressions follow the selected frame and survive a reload", async ({
+  page,
+}) => {
+  const { proc, url } = await startDebuggee();
+
+  try {
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+
+    // Two watches: one that resolves in the paused frame (`compute`), one that
+    // only resolves in its caller.
+    const add = page.getByLabel("Add watch expression");
+    await add.fill("scale * 10");
+    await add.press("Enter");
+    await add.fill("label");
+    await add.press("Enter");
+
+    const rows = page.locator(".watch li.row");
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(0).locator(".summary")).toContainText("20.0", {
+      timeout: 10_000,
+    });
+    // Out of scope here — a per-row error, with the other watch unaffected.
+    await expect(rows.nth(1).locator(".err")).toContainText("NameError");
+
+    // Selecting `main` re-evaluates both there, without being asked.
+    await page.locator(".stack button", { hasText: "main" }).click();
+    await expect(rows.nth(1).locator(".summary")).toContainText("MAIN_FRAME");
+    await expect(rows.nth(0).locator(".err")).toContainText("NameError");
+
+    // The list is the browser's, persisted: a reload brings it back and the
+    // backend (which was told nothing new) re-evaluates it on reconnect —
+    // against `main`, since the frame selection survives the reload too.
+    await page.reload();
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+    await expect(page.locator(".vars")).toContainText("label");
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(1).locator(".summary")).toContainText("MAIN_FRAME", {
+      timeout: 10_000,
+    });
+
+    // Removing a row drops it from the pane.
+    await rows.nth(1).getByRole("button", { name: "Remove watch" }).click();
+    await expect(rows).toHaveCount(1);
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
+
 test("refreshing the page while paused restores the UI", async ({ page }) => {
   // The everyday case: the user hits F5 (or the tab is restored) while the
   // debuggee sits paused. Everything the first connection consumed is gone from

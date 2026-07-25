@@ -51,6 +51,11 @@ class Debugger(bdb.Bdb):
         # and which frame the console + inspection currently target.
         self._frames: list[FrameType] = []
         self._selected = 0
+        # User-entered watch expressions, re-evaluated in the selected frame on
+        # every pause / frame change / cell run. The *list* is owned by the
+        # browser (it persists it and re-sends it on connect); we only hold the
+        # latest one we were told, so a reconnect cannot desync the two.
+        self._watches: list[str] = []
         self._quitting = False
         self._server: DebugServer | None = None
         # Post-mortem state: set when we enter `interaction` with a traceback
@@ -194,6 +199,7 @@ class Debugger(bdb.Bdb):
         self.start_server()
         self._reassert_sigint_handler()
         self._emit_paused(target)
+        self._emit_watches()
         while True:
             # The idle wait is deliberately *outside* the guard below: a real
             # terminal Ctrl+C while paused (this thread is the main thread, so
@@ -239,10 +245,16 @@ class Debugger(bdb.Bdb):
             finally:
                 self._executing = False
             self._emit_cell_result(result)
+            # The cell may have mutated whatever the watches look at.
+            self._emit_watches()
             return False
 
         if cmd == "select_frame":
             self._select_frame(msg.get("index"))
+            return False
+
+        if cmd == "set_watches":
+            self._set_watches(msg.get("exprs"))
             return False
 
         if cmd == "complete":
@@ -428,6 +440,96 @@ class Debugger(bdb.Bdb):
                 **self._frame_view(self._frames[index]),
             }
         )
+        # Watches follow the selection, like the console and the Variables tree.
+        self._emit_watches()
+
+    # --- watch expressions ------------------------------------------------
+
+    def _set_watches(self, exprs: object) -> None:
+        """Replace the watch list and report the new values.
+
+        Parameters
+        ----------
+        exprs
+            The full list of watch expressions (the browser owns the list and
+            always sends it whole); blank entries are dropped. A non-list emits
+            an ``error`` message and leaves the current watches alone.
+        """
+        if not isinstance(exprs, list):
+            self._emit({"type": "error", "message": f"bad watch list: {exprs!r}"})
+            return
+        cleaned: list[str] = []
+        for expr in exprs:
+            if not isinstance(expr, str):
+                self._emit({"type": "error", "message": f"bad watch: {expr!r}"})
+                return
+            if expr.strip():
+                cleaned.append(expr)
+        self._watches = cleaned
+        # Always answer, even when the list is now empty: that empty `watches`
+        # is how the browser learns the last expression really is gone.
+        self._emit_watches(force=True)
+
+    def _emit_watches(self, *, force: bool = False) -> None:
+        """Evaluate every watch expression in the selected frame and emit them.
+
+        Silent when nothing is watched (the common case), so the ordinary pause
+        path costs nothing. Evaluation happens on the debuggee thread, in the
+        *selected* frame, exactly like ``expand`` — but unlike ``expand`` it runs
+        user code (see :meth:`Console.watch`), so it is marked as an
+        interruptible window: a watch stuck in an endless loop would otherwise
+        wedge the debugger with no way to remove the watch, since this thread is
+        the one that would have to process that removal. With ``_executing``
+        set, the toolbar's interrupt reaches it (:meth:`interrupt`).
+
+        Parameters
+        ----------
+        force
+            Emit a ``watches`` message even when the list is empty (used by
+            ``set_watches``, so the browser sees a cleared list).
+        """
+        if not self._frames or (not self._watches and not force):
+            return
+        target = self._frames[self._selected]
+        values: list[dict[str, Any]] = []
+        self._executing = True
+        try:
+            for expr in self._watches:
+                values.append(self._watch_value(target, expr))
+        except KeyboardInterrupt:
+            # An interrupt aimed at a runaway watch that landed in the narrow
+            # window after the last one finished; swallow it (as the interaction
+            # loop does for cells) rather than let it derail the pause.
+            pass
+        finally:
+            self._executing = False
+        self._emit({"type": "watches", "watches": values})
+
+    def _watch_value(self, frame: FrameType, expr: str) -> dict[str, Any]:
+        """Evaluate one watch expression, turning any failure into a value.
+
+        Failures are per-expression on purpose: a watch of a name that does not
+        exist in *this* frame is entirely normal while stepping, and must not
+        blank the rest of the pane.
+
+        Parameters
+        ----------
+        frame
+            The frame to evaluate against.
+        expr
+            The watch expression.
+
+        Returns
+        -------
+        ``{"expr": ..., "repr": ..., "summary": ...}``, or ``{"expr": ...,
+        "error": ...}`` if evaluating it raised.
+        """
+        try:
+            return {"expr": expr, **self.console.watch(frame, expr)}
+        except KeyboardInterrupt:
+            return {"expr": expr, "error": "KeyboardInterrupt: watch interrupted"}
+        except BaseException as exc:  # noqa: BLE001 — a bad watch is a value, not a crash
+            return {"expr": expr, "error": f"{type(exc).__name__}: {exc}"}
 
     def _complete(self, code: object, cursor: object) -> None:
         """Tab-completion for a console cell, run against the *selected* frame.

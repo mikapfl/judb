@@ -222,6 +222,104 @@ def test_expand_returns_repr_and_children():
     assert not thread.is_alive()
 
 
+def test_watches_evaluate_in_the_selected_frame():
+    """Watch expressions are evaluated against the *selected* frame, refresh on
+    their own when the frame changes or a cell runs, and turn a failing
+    expression into a per-row error instead of blanking the pane."""
+    dbg = Debugger()
+    url = dbg.start_server(open_browser=False)
+
+    def inner(values: list[int]) -> None:
+        dbg.set_trace()
+        _ = values
+
+    def outer() -> None:
+        marker = "OUTER_LOCAL"  # noqa: F841 — watched from the browser
+        inner([1, 2, 3])
+
+    thread = threading.Thread(target=outer)
+    thread.start()
+
+    async def flow() -> None:
+        async with ClientSession() as session, session.ws_connect(ws_url(url)) as ws:
+            paused = await recv_type(ws, "paused")
+            stack = paused["stack"]
+            inner_idx = paused["selected"]
+            outer_idx = next(i for i, f in enumerate(stack) if f["function"] == "outer")
+
+            exprs = ["len(values)", "marker", "1 / 0"]
+            await ws.send_json({"cmd": "set_watches", "exprs": exprs})
+            got = {v["expr"]: v for v in (await recv_type(ws, "watches"))["watches"]}
+            assert got["len(values)"]["repr"]["text/plain"] == "3"
+            # Not in scope here, and a genuinely broken expression: both are
+            # per-expression errors, and neither hides the working watch above.
+            assert "NameError" in got["marker"]["error"]
+            assert "ZeroDivisionError" in got["1 / 0"]["error"]
+
+            # Selecting another frame re-evaluates without being asked.
+            await ws.send_json({"cmd": "select_frame", "index": outer_idx})
+            await recv_type(ws, "frame_selected")
+            got = {v["expr"]: v for v in (await recv_type(ws, "watches"))["watches"]}
+            assert "OUTER_LOCAL" in got["marker"]["repr"]["text/plain"]
+            assert "NameError" in got["len(values)"]["error"]
+
+            # A cell can change what a watch sees, so a cell run refreshes them.
+            await ws.send_json({"cmd": "select_frame", "index": inner_idx})
+            await recv_type(ws, "watches")
+            await ws.send_json({"cmd": "execute_cell", "code": "values.append(4)"})
+            await recv_type(ws, "cell_result")
+            got = {v["expr"]: v for v in (await recv_type(ws, "watches"))["watches"]}
+            assert got["len(values)"]["repr"]["text/plain"] == "4"
+
+            # Clearing the list is answered too, so the pane empties.
+            await ws.send_json({"cmd": "set_watches", "exprs": []})
+            assert (await recv_type(ws, "watches"))["watches"] == []
+
+            await ws.send_json({"cmd": "continue"})
+            await recv_type(ws, "running")
+
+    asyncio.run(flow())
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
+def test_watches_refresh_on_every_pause():
+    """The watch list outlives a step: each new pause re-evaluates it, which is
+    what makes watching a value while stepping useful."""
+    dbg = Debugger()
+    url = dbg.start_server(open_browser=False)
+
+    def debuggee() -> None:
+        total = 0
+        dbg.set_trace()
+        total += 5
+        _ = total
+
+    thread = threading.Thread(target=debuggee)
+    thread.start()
+
+    async def flow() -> None:
+        async with ClientSession() as session, session.ws_connect(ws_url(url)) as ws:
+            await recv_type(ws, "paused")
+            await ws.send_json({"cmd": "set_watches", "exprs": ["total"]})
+            first = await recv_type(ws, "watches")
+            assert first["watches"][0]["repr"]["text/plain"] == "0"
+
+            # Step over `total += 5`; the next pause reports the new value with
+            # no further `set_watches` from the browser.
+            await ws.send_json({"cmd": "next"})
+            await recv_type(ws, "paused")
+            second = await recv_type(ws, "watches")
+            assert second["watches"][0]["repr"]["text/plain"] == "5"
+
+            await ws.send_json({"cmd": "continue"})
+            await recv_type(ws, "running")
+
+    asyncio.run(flow())
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
 def test_set_break_stops_at_a_later_line():
     """A breakpoint set from the gutter while paused fires on the next
     ``continue``, re-pausing the debuggee at that line."""

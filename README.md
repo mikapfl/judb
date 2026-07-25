@@ -54,8 +54,10 @@ import matplotlib.pyplot as plt; plt.plot(df["x"])   # inline figure
 ```
 
 The console is a real notebook: cells are editable and re-runnable, and can be
-added, deleted, and reordered. You can also wire judb up as the `breakpoint()`
-hook, no code change needed:
+added, deleted, and reordered. Values you keep coming back to go in the **Watch**
+pane — pin an expression like `df.shape` or `arr.mean()` and it is re-evaluated
+every time you stop, change frame, or run a cell. You can also wire judb up as
+the `breakpoint()` hook, no code change needed:
 
 ```bash
 PYTHONBREAKPOINT=judb.set_trace python your_script.py

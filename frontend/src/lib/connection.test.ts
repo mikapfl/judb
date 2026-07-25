@@ -68,10 +68,14 @@ class FakeWS {
   onmessage: ((ev: { data: string }) => void) | null = null;
   onclose: (() => void) | null = null;
   onopen: (() => void) | null = null;
+  /** Everything the store sent on this socket, decoded (see the watch tests). */
+  sent: unknown[] = [];
   constructor(public url: string) {
     FakeWS.instances.push(this);
   }
-  send(): void {}
+  send(data: string): void {
+    this.sent.push(JSON.parse(data));
+  }
 }
 
 describe("reconnect", () => {
@@ -214,5 +218,100 @@ describe("exception pane", () => {
     deliver({ type: "paused", ...pausedBase });
     expect(conn.exception).toBeNull();
     expect(conn.postmortem).toBe(false);
+  });
+});
+
+describe("watch expressions", () => {
+  beforeEach(() => {
+    FakeWS.instances = [];
+    vi.stubGlobal("WebSocket", FakeWS);
+    localStorage.clear();
+    conn.watches = [];
+    conn.watchValues = [];
+    conn.connect();
+    FakeWS.instances[0].onopen?.();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    localStorage.clear();
+    conn.watches = [];
+    conn.watchValues = [];
+  });
+
+  const deliver = (msg: unknown) =>
+    FakeWS.instances[0].onmessage?.({ data: JSON.stringify(msg) });
+
+  /** The expression lists carried by every `set_watches` sent so far. */
+  const sentLists = () =>
+    FakeWS.instances
+      .flatMap((ws) => ws.sent)
+      .filter((m): m is { cmd: string; exprs: string[] } =>
+        (m as { cmd?: string }).cmd === "set_watches",
+      )
+      .map((m) => m.exprs);
+
+  it("sends the whole list on every edit and persists it", () => {
+    conn.addWatch("df.shape");
+    conn.addWatch("  total  "); // trimmed
+    conn.addWatch("df.shape"); // duplicate: ignored
+    conn.addWatch("   "); // blank: ignored
+    expect(conn.watches).toEqual(["df.shape", "total"]);
+
+    conn.setWatch(1, "total * 2");
+    conn.removeWatch(0);
+    expect(conn.watches).toEqual(["total * 2"]);
+
+    expect(sentLists()).toEqual([
+      ["df.shape"],
+      ["df.shape", "total"],
+      ["df.shape", "total * 2"],
+      ["total * 2"],
+    ]);
+    // Persisted, so a refresh (and the next run of the same debuggee) keeps it.
+    expect(JSON.parse(localStorage.getItem("judb-watches") ?? "[]")).toEqual([
+      "total * 2",
+    ]);
+  });
+
+  it("drops a row edited to blank or to a duplicate of another", () => {
+    conn.addWatch("a");
+    conn.addWatch("b");
+
+    conn.setWatch(1, "   "); // emptied -> removed
+    expect(conn.watches).toEqual(["a"]);
+
+    conn.addWatch("b");
+    conn.setWatch(1, "a"); // collapses onto the existing row
+    expect(conn.watches).toEqual(["a"]);
+  });
+
+  it("matches values to rows by expression, not position", () => {
+    conn.addWatch("a");
+    conn.addWatch("b");
+    deliver({
+      type: "watches",
+      watches: [
+        { expr: "a", repr: { "text/plain": "1" }, summary: "int  1" },
+        { expr: "b", error: "NameError: name 'b' is not defined" },
+      ],
+    });
+    expect(conn.watchValue(0)?.summary).toBe("int  1");
+    expect(conn.watchValue(1)?.error).toContain("NameError");
+
+    // A just-edited row has no value yet — it must not show the old one.
+    conn.setWatch(0, "a + 1");
+    expect(conn.watchValue(0)).toBeUndefined();
+  });
+
+  it("hands the list to the backend again on reconnect", () => {
+    conn.addWatch("df.shape");
+    // A fresh socket (refresh / dropped connection / a new debuggee run) has a
+    // backend that knows nothing about our watches.
+    conn.connect();
+    FakeWS.instances[1].onopen?.();
+    expect(FakeWS.instances[1].sent).toEqual([
+      { cmd: "set_watches", exprs: ["df.shape"] },
+    ]);
   });
 });
