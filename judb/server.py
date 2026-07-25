@@ -132,6 +132,13 @@ class DebugServer:
                 # Remember it for a reconnecting browser. Rebinding a reference
                 # is atomic, so the event-loop thread reads it without a lock.
                 self._last_state = msg
+            elif msg_type == "frame_selected":
+                # Same story for the selected frame: `frame_selected` is one-shot,
+                # but the *debugger* keeps that selection — cells, watches and
+                # inspection all target it. Replaying the untouched pause snapshot
+                # would come back showing the innermost frame while the backend
+                # still answers for the selected one.
+                self._fold_frame_selected(msg)
             elif msg_type == "breakpoints":
                 # A breakpoint set/cleared *after* the pause: the `breakpoints`
                 # message is one-shot (not replayed), so fold it into the cached
@@ -140,6 +147,36 @@ class DebugServer:
                 # place) to keep the event-loop thread's lock-free read atomic.
                 self._fold_breakpoints(msg)
             self._loop.call_soon_threadsafe(self._out_q.put_nowait, msg)
+
+    def _fold_frame_selected(self, msg: dict[str, Any]) -> None:
+        """Update the cached paused snapshot with a ``frame_selected`` message.
+
+        A reconnecting browser then comes up on the frame the debugger is
+        actually targeting, rather than the innermost one it stopped at.
+
+        Parameters
+        ----------
+        msg
+            The ``frame_selected`` message flowing out to the browser; it
+            carries the same per-frame fields as ``paused`` (see
+            ``Debugger._frame_view``).
+        """
+        last = self._last_state
+        if last is None or last.get("type") != "paused":
+            return
+        patched = dict(last)
+        patched["selected"] = msg.get("index", patched.get("selected"))
+        for key in (
+            "filename",
+            "lineno",
+            "function",
+            "locals",
+            "source",
+            "breakpoints",
+        ):
+            if key in msg:
+                patched[key] = msg[key]
+        self._last_state = patched
 
     def _fold_breakpoints(self, msg: dict[str, Any]) -> None:
         """Update the cached paused snapshot with a ``breakpoints`` message.

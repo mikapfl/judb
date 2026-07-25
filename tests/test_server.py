@@ -117,6 +117,52 @@ def test_reconnect_replays_current_state():
     assert not thread.is_alive()
 
 
+def test_reconnect_restores_the_selected_frame():
+    """A frame selected before a refresh is still the one the UI comes back on.
+
+    ``frame_selected`` is one-shot, but the debugger *keeps* that selection —
+    cells, watches and inspection all target it. Without folding it into the
+    cached snapshot the reloaded tab showed the innermost frame while the
+    backend still answered for the outer one.
+    """
+    dbg = Debugger()
+    url = dbg.start_server(open_browser=False)
+
+    def inner() -> None:
+        dbg.set_trace()
+        _ = 1
+
+    def outer() -> None:
+        marker = "OUTER_LOCAL"  # noqa: F841 — proves which frame we came back on
+        inner()
+
+    thread = threading.Thread(target=outer)
+    thread.start()
+
+    async def flow() -> None:
+        async with ClientSession() as session:
+            async with session.ws_connect(ws_url(url)) as ws:
+                paused = await recv_type(ws, "paused")
+                outer_idx = next(
+                    i for i, f in enumerate(paused["stack"]) if f["function"] == "outer"
+                )
+                await ws.send_json({"cmd": "select_frame", "index": outer_idx})
+                await recv_type(ws, "frame_selected")
+
+            async with session.ws_connect(ws_url(url)) as ws:
+                again = await recv_type(ws, "paused")
+                assert again["selected"] == outer_idx
+                assert again["function"] == "outer"
+                assert "marker" in again["locals"]
+
+                await ws.send_json({"cmd": "continue"})
+                await recv_type(ws, "running")
+
+    asyncio.run(flow())
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
 def test_reconnect_restores_breakpoints():
     """Breakpoints set after the pause survive a browser refresh.
 
