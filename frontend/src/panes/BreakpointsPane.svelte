@@ -35,7 +35,16 @@
         {#each bps as bp (bp.line)}
           <li class:conditional={bp.cond || bp.temporary || bp.ignore}>
             <span class="marker">{bp.cond || bp.temporary || bp.ignore ? "◆" : "●"}</span>
-            <span class="line">line {bp.line}</span>
+            <!-- Cross-file navigation: show the breakpoint's own file in the
+                 Source pane, scrolled to it (its file may be one no frame is
+                 in — that is exactly `open_file`'s job). -->
+            <button
+              class="line"
+              title="Show this line in the source"
+              onclick={() => conn.openFile(bp.filename, bp.line)}
+            >
+              line {bp.line}
+            </button>
             {#if bp.cond}<code class="cond" title={bp.cond}>if {bp.cond}</code>{/if}
             {#if options(bp)}<span class="opts">{options(bp)}</span>{/if}
             <button
@@ -98,6 +107,17 @@
   }
   .line {
     white-space: nowrap;
+    padding: 0 0.15rem;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+  .line:hover {
+    background: var(--accent-bg);
+    color: var(--fg);
   }
   .cond {
     color: var(--warn-fg);

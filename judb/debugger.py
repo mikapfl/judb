@@ -281,6 +281,10 @@ class Debugger(bdb.Bdb):
             self._expand(msg.get("path"))
             return False
 
+        if cmd == "open_file":
+            self._open_file(msg.get("filename"))
+            return False
+
         if cmd in ("set_break", "clear_break"):
             self._toggle_break(
                 cmd,
@@ -579,6 +583,47 @@ class Debugger(bdb.Bdb):
             )
             return
         self._emit({"type": "expanded", "path": path, **node})
+
+    def _open_file(self, filename: object) -> None:
+        """Serve any source file to the browser, on request.
+
+        The Source pane otherwise only ever shows a file some *frame* is in,
+        which makes a breakpoint in code the debuggee has not reached yet
+        unreachable — you would have to run to it first, which is the thing you
+        wanted the breakpoint for. With this, the browser can display an
+        arbitrary file and set a breakpoint in it (bdb reads the file through
+        ``linecache`` too, so a not-yet-imported module works).
+
+        Reading a file adds no exposure the console does not already have (the
+        server is localhost + token, and cells run arbitrary code), but it is
+        deliberately *read-only* and driven entirely by the browser.
+
+        Parameters
+        ----------
+        filename
+            The path to read, absolute or relative to the debuggee's working
+            directory.
+        """
+        if not isinstance(filename, str) or not filename:
+            self._emit({"type": "error", "message": f"bad open_file: {filename!r}"})
+            return
+        # Report the canonical name, the identity `breaks` and every frame view
+        # use, so the browser can match this file against them by equality.
+        canonical = self.canonic(filename)
+        source = "".join(linecache.getlines(filename))
+        if not source and canonical != filename:
+            source = "".join(linecache.getlines(canonical))
+        message: dict[str, Any] = {
+            "type": "source",
+            "filename": canonical,
+            "source": source,
+            "breakpoints": self._file_breaks(canonical),
+        }
+        if not source:
+            # Unreadable, empty, or simply not there — say so rather than
+            # swapping the pane to a blank document.
+            message["error"] = f"Cannot read {filename}"
+        self._emit(message)
 
     def _toggle_break(
         self,

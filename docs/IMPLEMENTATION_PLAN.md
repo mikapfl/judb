@@ -391,8 +391,12 @@ user-supplied theme will bind to. B3 — **watch expressions** — is **shipped*
 pause, frame change and cell run, rendered with the same display formatter as the
 Variables tree; the *list* is owned and persisted by the browser, which re-sends
 it on every connect (so a refresh, a reconnect and the next run of the same
-program all work through one path, with no settings layer). Still ahead in Wave
-B: multi-file *navigation* (`open_file`), and a minimal settings layer.
+program all work through one path, with no settings layer). B4 — **multi-file
+navigation** — is **shipped**: `open_file` serves any source file, so the Source
+pane can *browse* a file no frame is in (clearly badged as such, with the
+current-line highlight reserved for the frame) and set a breakpoint in code the
+debuggee has not reached yet — the Breakpoints and Exception panes navigate
+there in one click. Still ahead in Wave B: a minimal settings layer (B5).
 
 **Phase 3a – saved debug expressions.** Add a way to save + load cell sources
 close to the source, so repeated debugging can re-use cells. Things to consider

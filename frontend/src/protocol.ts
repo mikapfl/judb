@@ -165,6 +165,18 @@ export interface ExpandedMsg {
   error?: string;
 }
 
+/** Reply to `open_file`: any source file, so the pane can show (and break in) a
+ *  file no frame is in yet. `error` is set when it could not be read. */
+export interface SourceMsg {
+  type: "source";
+  /** The file's canonical path — spelled as `stack`/`paused` spell it. */
+  filename: string;
+  source: string;
+  /** Breakpoints already set in this file. */
+  breakpoints: Breakpoint[];
+  error?: string;
+}
+
 /** One watch expression's current value in the selected frame. Either it
  *  evaluated (`repr`/`summary`) or it didn't (`error`) — a watch that names
  *  something out of scope in this frame is normal while stepping. */
@@ -230,6 +242,7 @@ export type ServerMsg =
   | FinishedMsg
   | CellResultMsg
   | ExpandedMsg
+  | SourceMsg
   | WatchesMsg
   | CompletionsMsg
   | BreakpointsMsg
@@ -249,6 +262,9 @@ export type Command =
   | { cmd: "expand"; path: VarPath }
   /** The full watch list (the browser owns it and always sends it whole). */
   | { cmd: "set_watches"; exprs: string[] }
+  /** Show any file in the Source pane, frame or not (absolute, or relative to
+   *  the debuggee's working directory). */
+  | { cmd: "open_file"; filename: string }
   | { cmd: "complete"; code: string; cursor: number }
   | {
       cmd: "set_break";
