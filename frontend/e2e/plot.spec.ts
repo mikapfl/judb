@@ -4,9 +4,12 @@ import { expect, test } from "@playwright/test";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 
-/** Launch the Python debuggee; resolve once it prints its server URL. */
-function startDebuggee(): Promise<{ proc: ChildProcessWithoutNullStreams; url: string }> {
-  const proc = spawn("uv", ["run", "python", "frontend/e2e/debuggee.py"], {
+/** Launch a Python debuggee (defaults to the live-pause fixture); resolve once
+ *  it prints its server URL. */
+function startDebuggee(
+  script = "frontend/e2e/debuggee.py",
+): Promise<{ proc: ChildProcessWithoutNullStreams; url: string }> {
+  const proc = spawn("uv", ["run", "python", script], {
     cwd: REPO_ROOT,
   });
   return new Promise((resolve, reject) => {
@@ -328,6 +331,57 @@ test("interactive matplotlib: render an in-frame plot, then zoom it", async ({ p
         timeout: 10_000,
       })
       .not.toBe(before);
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
+
+test("post-mortem: the exception pane shows the crash after continue", async ({ page }) => {
+  const { proc, url } = await startDebuggee("frontend/e2e/crash_debuggee.py");
+
+  try {
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+
+    // An ordinary pause: the exception pane is empty.
+    const pane = page.locator(".exception");
+    await expect(pane).toContainText("No exception.");
+    await expect(page.locator(".exc-tb")).toHaveCount(0);
+
+    // Continue → the debuggee crashes and the debugger re-pauses post-mortem.
+    await page.getByRole("button", { name: "Continue" }).click();
+
+    // The exception pane now names the crash and shows its traceback.
+    await expect(pane).toContainText("ValueError", { timeout: 15_000 });
+    await expect(pane).toContainText("bad rows");
+    await expect(page.locator(".exc-tb")).toContainText("ValueError: bad rows");
+    await expect(page.locator(".exc-tb")).toContainText("compute");
+
+    // The failing line is marked and its source is highlighted here in the
+    // browser, from the same palette as the source editor — so the traceback
+    // and the Source pane paint `raise` with the identical colour.
+    // One marked line per frame; the innermost (last) one is where it raised.
+    const failing = page.locator(".exc-tb .row.current").last();
+    await expect(failing).toContainText('raise ValueError("bad rows")');
+    const tbKeyword = failing.locator("span", { hasText: /^raise$/ }).first();
+    const srcKeyword = page
+      .locator(".cm-content span", { hasText: /^raise$/ })
+      .first();
+    const color = (l: typeof tbKeyword) =>
+      l.evaluate((n) => getComputedStyle(n).color);
+    expect(await color(tbKeyword)).toBe(await color(srcKeyword));
+
+    // Frames still on the stack are selectable from the traceback itself, just
+    // like the call-stack pane: click `main` and the variables retarget to it.
+    // (This only works because the backend spells traceback filenames with
+    // `Bdb.canonic`, exactly as the `stack` message does.)
+    await expect(page.locator(".vars")).toContainText("rows");
+    await page.locator(".exc-tb button.frame-loc", { hasText: "in main" }).click();
+    await expect(page.locator(".vars")).toContainText("data");
+    await expect(page.locator(".vars")).not.toContainText("rows");
+    await expect(
+      page.locator(".exc-tb button.frame-loc.selected"),
+    ).toContainText("in main");
   } finally {
     if (proc.exitCode === null) proc.kill("SIGKILL");
   }

@@ -14,8 +14,9 @@ Scope (Phase 3 / Wave A, see docs/PHASE3_PLAN.md A2):
   * ``-c`` is deliberately absent: pdb's ``-c`` takes *debugger commands*, which
     judb drives from the browser instead.
   * Default-stop behavior is **stop-on-entry** (resolved open decision #3).
-  * The process exits when the target finishes (no post-run inspection prompt
-    yet) — a follow-up for A3/B2.
+  * The process exits when the target finishes; if it *crashes* (an uncaught
+    exception), it drops into post-mortem first so the browser can inspect the
+    failing frame, then exits non-zero (Phase 3 / Wave B, B2).
 """
 
 import builtins
@@ -180,8 +181,28 @@ def _run_code(
     dbg.start_server(open_browser=open_browser)
     # Bdb.run traces the exec: it stops at the target's first executable line
     # (stop-on-entry), then the UI drives stepping/continue as usual. BdbQuit
-    # (from the UI's "quit") is swallowed by Bdb.run.
-    dbg.run(code, namespace, namespace)
+    # (from the UI's "quit") is swallowed by Bdb.run; any *other* exception the
+    # debuggee raises past its own code propagates out here.
+    try:
+        dbg.run(code, namespace, namespace)
+    except (SystemExit, KeyboardInterrupt):
+        # The debuggee's own exit / a Ctrl+C: honour it, don't treat as a crash.
+        raise
+    except BaseException as exc:  # noqa: BLE001 — the debuggee crashed; catch it
+        # Land the browser on the failing frame so the crash can be inspected in
+        # place (this is `-m judb`'s catch-the-crash workflow; see
+        # docs/PHASE3_PLAN.md B2), instead of the process dying with only a
+        # terminal traceback. Trim judb's own runner frames off the top of the
+        # traceback (the `_run_code`/`bdb.run` exec plumbing) so the post-mortem
+        # stack starts at the debuggee's own module frame.
+        tb = exc.__traceback__
+        while tb is not None and tb.tb_frame.f_code is not code:
+            tb = tb.tb_next
+        dbg.post_mortem(exc.with_traceback(tb) if tb is not None else exc)
+        # Preserve the failure signal for the shell/CI once inspection is done;
+        # the browser already showed the traceback, so exit quietly (no second
+        # dump to the terminal).
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

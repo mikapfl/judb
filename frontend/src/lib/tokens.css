@@ -57,6 +57,28 @@
   --img-bg: #ffffff;
   --df-bg: #1e1e22;
 
+  /* The 16 ANSI terminal colours, for output that is genuinely terminal output
+     (a debuggee's coloured `print`, `obj?`, the console's IPython traceback).
+     Deliberately a real terminal palette and *not* aliased to --tok-*: code we
+     know is code is highlighted from the syntax palette above (lib/highlight.ts),
+     so ANSI never has to stand in for syntax. See lib/ansi.ts. */
+  --ansi-black: #3f4451;
+  --ansi-red: #e05561;
+  --ansi-green: #8cc265;
+  --ansi-yellow: #d18f52;
+  --ansi-blue: #4aa5f0;
+  --ansi-magenta: #c162de;
+  --ansi-cyan: #42b3c2;
+  --ansi-white: #d7dae0;
+  --ansi-bright-black: #4f5666;
+  --ansi-bright-red: #ff616e;
+  --ansi-bright-green: #a5e075;
+  --ansi-bright-yellow: #f0a45d;
+  --ansi-bright-blue: #4dc4ff;
+  --ansi-bright-magenta: #de73ff;
+  --ansi-bright-cyan: #4cd1e0;
+  --ansi-bright-white: #e6e6e6;
+
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --font-size: 13px;
 
@@ -105,6 +127,139 @@
 
   --img-bg: #ffffff;
   --df-bg: #ffffff;
+
+  /* Darkened so every one stays legible on a white background (and so black
+     text on the yellow *background* — IPython's `---->` marker — still reads). */
+  --ansi-black: #24292e;
+  --ansi-red: #cb2431;
+  --ansi-green: #22863a;
+  --ansi-yellow: #b08800;
+  --ansi-blue: #005cc5;
+  --ansi-magenta: #a626a4;
+  --ansi-cyan: #1b7c83;
+  --ansi-white: #6a737d;
+  --ansi-bright-black: #57606a;
+  --ansi-bright-red: #e5534b;
+  --ansi-bright-green: #2da44e;
+  --ansi-bright-yellow: #bf8700;
+  --ansi-bright-blue: #0969da;
+  --ansi-bright-magenta: #bf3989;
+  --ansi-bright-cyan: #257f8c;
+  --ansi-bright-white: #8c959f;
+}
+
+/* anser's class names (`use_classes: true` — see lib/ansi.ts), bound to the
+   terminal palette above. Indices 16-255 are xterm's fixed cube/greyscale and
+   are generated at runtime in lib/ansi.ts, not written out here. */
+.ansi-black-fg {
+  color: var(--ansi-black);
+}
+.ansi-red-fg {
+  color: var(--ansi-red);
+}
+.ansi-green-fg {
+  color: var(--ansi-green);
+}
+.ansi-yellow-fg {
+  color: var(--ansi-yellow);
+}
+.ansi-blue-fg {
+  color: var(--ansi-blue);
+}
+.ansi-magenta-fg {
+  color: var(--ansi-magenta);
+}
+.ansi-cyan-fg {
+  color: var(--ansi-cyan);
+}
+.ansi-white-fg {
+  color: var(--ansi-white);
+}
+.ansi-bright-black-fg {
+  color: var(--ansi-bright-black);
+}
+.ansi-bright-red-fg {
+  color: var(--ansi-bright-red);
+}
+.ansi-bright-green-fg {
+  color: var(--ansi-bright-green);
+}
+.ansi-bright-yellow-fg {
+  color: var(--ansi-bright-yellow);
+}
+.ansi-bright-blue-fg {
+  color: var(--ansi-bright-blue);
+}
+.ansi-bright-magenta-fg {
+  color: var(--ansi-bright-magenta);
+}
+.ansi-bright-cyan-fg {
+  color: var(--ansi-bright-cyan);
+}
+.ansi-bright-white-fg {
+  color: var(--ansi-bright-white);
+}
+
+.ansi-black-bg {
+  background-color: var(--ansi-black);
+}
+.ansi-red-bg {
+  background-color: var(--ansi-red);
+}
+.ansi-green-bg {
+  background-color: var(--ansi-green);
+}
+.ansi-yellow-bg {
+  background-color: var(--ansi-yellow);
+}
+.ansi-blue-bg {
+  background-color: var(--ansi-blue);
+}
+.ansi-magenta-bg {
+  background-color: var(--ansi-magenta);
+}
+.ansi-cyan-bg {
+  background-color: var(--ansi-cyan);
+}
+.ansi-white-bg {
+  background-color: var(--ansi-white);
+}
+.ansi-bright-black-bg {
+  background-color: var(--ansi-bright-black);
+}
+.ansi-bright-red-bg {
+  background-color: var(--ansi-bright-red);
+}
+.ansi-bright-green-bg {
+  background-color: var(--ansi-bright-green);
+}
+.ansi-bright-yellow-bg {
+  background-color: var(--ansi-bright-yellow);
+}
+.ansi-bright-blue-bg {
+  background-color: var(--ansi-bright-blue);
+}
+.ansi-bright-magenta-bg {
+  background-color: var(--ansi-bright-magenta);
+}
+.ansi-bright-cyan-bg {
+  background-color: var(--ansi-bright-cyan);
+}
+.ansi-bright-white-bg {
+  background-color: var(--ansi-bright-white);
+}
+
+.ansi-bold {
+  font-weight: bold;
+}
+.ansi-dim {
+  opacity: 0.7;
+}
+.ansi-italic {
+  font-style: italic;
+}
+.ansi-underline {
+  text-decoration: underline;
 }
 
 * {

@@ -17,9 +17,11 @@ are; its §5 defines the phases and each phase's exit criterion.
 
 **Current status: Phase 3 Wave A shipped — `judb 0.1.0` is on PyPI** (`pip install
 judb` works; entry points `python -m judb`, `pytest --pdbcls`, and `set_trace` all
-land in the browser UI). Wave B (deepen the debugger — conditional breakpoints,
-break-on-exception, watch expressions, multi-file source, settings) is the current
-focus; see `docs/PHASE3_PLAN.md`. Phase 2 (four-pane app, the MVP) is complete. Phase 1
+land in the browser UI). Wave B (deepen the debugger) is the current focus; see
+`docs/PHASE3_PLAN.md`. Within it, **B1 (conditional/temporary/ignore breakpoints
++ the Breakpoints pane) and B2 (break-on-exception → post-mortem + the Exception
+pane) are done**; watch expressions (B3), multi-file `open_file` navigation (B4),
+and settings (B5) remain. Phase 2 (four-pane app, the MVP) is complete. Phase 1
 (vertical slice) is complete: `judb.set_trace()` starts a localhost websocket server
 (`judb/server.py`) and opens a browser page served from `judb/static/index.html`.
 That page is now the **built Svelte SPA** (source in `frontend/`, see below), not
@@ -49,6 +51,9 @@ packaged and shipped as `0.1.0`.
 - `uv run ty check` — type-check only.
 - `uv run python scripts/demo_p2.py` — run a demo debuggee and drive it from the
   browser UI (`scripts/demo_rich.py` for a spread of rich objects).
+- `uv run python -m judb scripts/demo_crash.py` — demo the break-on-exception /
+  post-mortem flow: it crashes, judb pauses on the failing frame (Continue past
+  the stop-on-entry), and the Exception pane shows the colored traceback.
 
 Use `uv` for everything (deps live in `pyproject.toml`; `uv sync` to install  - or use `uv add` directly).
 pre-commit is installed as a git hook, so commits are gated on the same checks as `make lint`.
@@ -179,8 +184,22 @@ debuggee and (eventually) the web server:
   FIFO-correlated `complete`→`completions` round-trip). The backend contract is
   unchanged: same queues, same mime bundles.
 
-### Two invariants that are easy to break
+### Three invariants that are easy to break
 
+- **Colour lives in the frontend, in one palette per kind.** The backend never
+  decides what colour anything is. Python source — the Source pane, console
+  cells, and the Exception pane's traceback — is highlighted from the single
+  `judbHighlight` style in `lib/codemirror.ts`, whose colours are `--tok-*`
+  custom properties (`lib/tokens.css`); `lib/highlight.ts` applies it outside an
+  `EditorView`. That's why `judb/tracebacks.py` ships traceback *structure*, not
+  IPython's ANSI text: a theme (later, a user's own) is then one set of variables
+  and everything showing code follows. Genuine terminal output keeps a separate,
+  honest 16-colour ANSI palette (`lib/ansi.ts` + `--ansi-*`) — never alias the
+  two, or a debuggee's coloured `print` starts wearing syntax colours.
+- **Anything from the debuggee is escaped before `{@html}`.** `Anser.ansiToHtml`
+  does *not* escape; `lib/ansi.ts` wraps it with `escapeForHtml` so a printed
+  `<img onerror=…>` can't write into judb's own page. Route ANSI through that
+  helper, never anser directly.
 - **Threading model.** Cells execute on the *debuggee thread* (the one that's
   paused), because touching frame state and matplotlib/thread-local state must
   happen there. The interaction loop blocks that thread on `inbound.get()`; the

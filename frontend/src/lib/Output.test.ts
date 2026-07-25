@@ -128,12 +128,24 @@ describe("Output renderer registry", () => {
     // "\x1b[31mSignature\x1b[39m" — red then reset, the shape pinfo emits.
     const { container } = out({
       kind: "display_data",
-      data: { "text/plain": "[31mSignature[39m: greet(name)" },
+      data: { "text/plain": "\x1b[31mSignature\x1b[39m: greet(name)" },
     });
     const pre = container.querySelector("pre.out");
     expect(pre?.textContent).toContain("Signature: greet(name)");
-    // anser turned the escape into a styled span rather than leaving raw codes.
-    expect(pre?.querySelector("span")).toBeTruthy();
-    expect(pre?.innerHTML).not.toContain("[");
+    // The escape became a *class* (which resolves to the theme's --ansi-red),
+    // not a baked-in colour, and no raw codes leaked through.
+    expect(pre?.querySelector("span.ansi-red-fg")).toBeTruthy();
+    expect(pre?.innerHTML).not.toContain("\x1b[");
+  });
+
+  it("escapes markup in stream output instead of injecting it", () => {
+    // A debuggee that prints HTML must not get to write into judb's own page.
+    const { container } = out({
+      kind: "stream",
+      data: { name: "stdout", text: "<img src=x onerror=alert(1)>\n" },
+    });
+    const pre = container.querySelector("pre.stream");
+    expect(pre?.querySelector("img")).toBeNull();
+    expect(pre?.textContent).toContain("<img src=x onerror=alert(1)>");
   });
 });
