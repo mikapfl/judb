@@ -17,11 +17,12 @@ are; its §5 defines the phases and each phase's exit criterion.
 
 **Current status: Phase 3 Wave A shipped — `judb 0.1.0` is on PyPI** (`pip install
 judb` works; entry points `python -m judb`, `pytest --pdbcls`, and `set_trace` all
-land in the browser UI). Wave B (deepen the debugger) is the current focus; see
+land in the browser UI). Wave B (deepen the debugger) is **complete**; see
 `docs/PHASE3_PLAN.md`. Within it, **B1 (conditional/temporary/ignore breakpoints
 + the Breakpoints pane), B2 (break-on-exception → post-mortem + the Exception
-pane), B3 (watch expressions + the Watch pane) and B4 (multi-file `open_file`
-navigation) are done**; settings (B5) remains. Phase 2 (four-pane app, the MVP) is complete. Phase 1
+pane), B3 (watch expressions + the Watch pane), B4 (multi-file `open_file`
+navigation) and B5 (settings — `judb/config.py`) are all done**; next up is
+Phase 3a (saved/loadable debug cells). Phase 2 (four-pane app, the MVP) is complete. Phase 1
 (vertical slice) is complete: `judb.set_trace()` starts a localhost websocket server
 (`judb/server.py`) and opens a browser page served from `judb/static/index.html`.
 That page is now the **built Svelte SPA** (source in `frontend/`, see below), not
@@ -105,6 +106,9 @@ Files are named for **what they cover**, not the phase that introduced them:
 - `test_entrypoints.py` — how users start judb: `pytest --pdbcls` (post-mortem,
   `--trace`, `breakpoint()`), `python -m judb` (script and `-m module`), and
   `set_trace` hardening.
+- `test_config.py` — how users configure judb: config-file resolution and
+  precedence, `python -m judb`'s option parsing, and two real subprocesses
+  proving a project's `[tool.judb]` is honoured (and beaten by a flag).
 - `test_mpl_backend.py` — the `%matplotlib judb` WebAgg backend.
 - `helpers.py` — shared drivers (`ws_url`, `recv_type`, `read_judb_url`,
   `read_pty_for_url`, …). Imported as `from helpers import ...`: `tests/` has no
@@ -170,6 +174,15 @@ debuggee and (eventually) the web server:
   use the Jupyter mime-bundle shape (dict keyed by mime type) so the future
   frontend can render them with standard tooling (`@jupyterlab/rendermime`) with
   **zero backend change**. This mime-bundle format is a load-bearing contract; keep it.
+- **`judb/config.py`** — the process-level settings (`open_browser`,
+  `break_on_exception`, `figure_format`), resolved once per process from an
+  explicit argument → a `python -m judb` flag (`configure`) → the nearest
+  `pyproject.toml`'s `[tool.judb]` → `$XDG_CONFIG_HOME/judb/config.toml` →
+  defaults, merged per key. Read it via `config.settings()`; a `bool | None`
+  parameter defaulting to `None` (as in `start_server`) is how an explicit
+  argument keeps winning. Pure-UI prefs (theme, watch list) stay in the
+  browser's `localStorage` — there is deliberately **no settings message on the
+  wire**. A bad config warns on stderr and falls back; a bad *flag* exits 2.
 - **`judb/server.py`** — aiohttp server on a daemon thread bridging the debugger's
   queues to a WebSocket (browser→`inbound.put`, `outbound`→browser). Localhost +
   random port + random URL token (mandatory: it runs arbitrary code). The seam is

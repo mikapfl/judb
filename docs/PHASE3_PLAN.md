@@ -29,8 +29,13 @@ Phase-2a codebase. Same conventions: **[DECISION]** = recommended but open,
 > - **B4 ✅ done** (branch `open-file`) — `open_file` + a browse mode in the
 >   Source pane, so a breakpoint can be set in a file the debuggee has not
 >   reached yet; the Breakpoints and Exception panes navigate to it.
-> - **B5 remains** (settings) — now more valuable than it was, because a *user
->   theme* has a real surface to bind to.
+> - **B5 ✅ done** (branch `settings`) — `judb/config.py`: `[tool.judb]` /
+>   `~/.config/judb/config.toml` for the three process-level options, plus the
+>   first real `python -m judb` flags. A *user theme* is the obvious next
+>   setting and stays open (see B5).
+>
+> **Wave B is complete.** What follows is Phase 3a (saved/loadable debug cells)
+> — see `IMPLEMENTATION_PLAN.md` §5.
 
 Phase 2a gave us "something to show the world" — but only to someone sitting at a
 checkout running `make frontend` first. **Wave A makes it *reachable*** (a real
@@ -151,9 +156,11 @@ Things that don't show up in the demo scripts but bite real users.
 - **CHANGELOG + version. ✅ Done.** Changelog managed with **towncrier**:
   fragments in `changelog.d/`, collated by `make changelog` at release time, so
   branches in flight never conflict over `CHANGELOG.md`; CI runs
-  `towncrier check` on PRs. Version single-sourced as `__version__` in
-  `judb/__init__.py` (hatchling `dynamic`, towncrier reads it too), so a release
-  bumps one line. `0.1.0` fragments for the Wave-A work are already written.
+  `towncrier check` on PRs. Version single-sourced as **`[project] version` in
+  `pyproject.toml`** — static, because `uv version --bump` (which the release
+  workflow runs) refuses a dynamic version; `judb.__version__` reports the
+  *installed* distribution via `importlib.metadata`, so nothing is written down
+  twice. `0.1.0` fragments for the Wave-A work are already written.
 - **Publish to PyPI as `0.1.0`. ✅ Done.** `judb 0.1.0` is live on PyPI —
   `pip install judb` works. This is the concrete "show the world" deliverable and
   the Wave A exit. The one-time setup (trusted publishers + `testpypi`/`pypi`
@@ -353,26 +360,59 @@ Today the Source pane always shows the current/selected frame's file
   through the real UI (open by path → gutter → continue → paused in that file),
   plus store vitest for browse mode and the breakpoint routing.
 
-### B5. Settings / configuration
+### B5. Settings / configuration — ✅ Done
 
-No config layer exists. Introduce a minimal one rather than a big framework.
+A minimal config layer rather than a framework: `judb/config.py` is ~200 lines
+and the whole surface is three keys.
 
-- **Scope for Phase 3:** just the settings that unblock the above — default figure
-  format (inline PNG vs `%matplotlib judb`), break-on-exception policy, theme
-  (already persisted client-side), and browser-auto-open. **[DECISION]** Source of
-  truth: a small `pyproject.toml [tool.judb]` / `~/.config/judb` reader on the
-  Python side for process-level options, plus the existing client-side localStorage
-  for pure-UI prefs. Avoid inventing a bidirectional settings-sync protocol now.
-- **A user theme is now cheap, and is the obvious first custom setting.** B2's
-  rework made `frontend/src/lib/tokens.css` the single place any colour comes
-  from — `--tok-*` for every view of Python (source pane, console cells,
-  traceback) and `--ansi-*` for terminal output. A user theme is therefore a set
-  of custom-property overrides, not a per-component change; nothing in the
-  backend has a colour opinion to override. Open question when we get to it:
-  **[OPEN]** where a custom theme lives — localStorage-only (pure UI, consistent
-  with the existing light/dark toggle) vs. `[tool.judb.theme]` in
-  `pyproject.toml` so a project can ship one. Recommend localStorage first.
-- *Exit:* `[tool.judb] break_on_exception = false` in a project is honored.
+- **Scope, as planned.** `open_browser`, `break_on_exception` and
+  `figure_format` (`"png"` vs `"interactive"`, i.e. starting where
+  `%matplotlib judb` would have left you) — the process-level options, resolved
+  on the Python side. The theme and the watch list stay client-side, so **no
+  bidirectional settings-sync protocol was invented**, as the [DECISION] asked.
+- **Layers, most specific first:** an explicit argument (`set_trace(open_browser=
+  False)`), a `python -m judb` flag, the nearest `pyproject.toml`'s
+  `[tool.judb]`, `$XDG_CONFIG_HOME/judb/config.toml` (judb's own file, so keys
+  sit at the top level), the defaults. Merging is **per key**, so a project
+  overriding one setting leaves the user's opinion on the others intact.
+  Settings resolve **once** and are cached — otherwise a debuggee that
+  `chdir`s could make judb answer differently later in the same run.
+- **The nearest `pyproject.toml` ends the upward walk**, even when it has no
+  `[tool.judb]`: the first one found *is* the project root, and a checkout
+  nested in another project must not inherit the outer one's debugger settings.
+- **A bad config is a warning, never an exception.** Malformed TOML, an unknown
+  key, an ill-typed value: each prints one line to stderr and falls back to the
+  default. Refusing to start the debugger over a stale key would be a poor
+  trade — the debugger is the thing the user actually asked for. A mistyped
+  *command-line flag*, by contrast, exits 2: that one was typed on purpose.
+- **`python -m judb` grew its first options** (`--browser/--no-browser`,
+  `--break-on-exception/--no-break-on-exception`, `--figure-format`, and a real
+  `--help`). Parsing stops at the target, so `python -m judb train.py
+  --no-browser` passes `--no-browser` to *train.py* — anything else would make a
+  target's flags unusable whenever they collide with judb's. `--` ends judb's
+  options explicitly.
+- **`break_on_exception = false` reports the crash the way an undebugged run
+  would** — the trimmed traceback on the terminal, exit 1 — rather than parking
+  an unattended run in post-mortem waiting for a browser nobody will open.
+- **`JUDB_NO_BROWSER` stays a hard override** on top of all of it (headless
+  boxes, CI, the test suite). It predates the config layer and does one blunt
+  thing well; folding it in as just another layer would have made
+  `open_browser = true` in a project config re-open tabs on CI.
+- *Exit met:* `[tool.judb] break_on_exception = false` in a project is honored —
+  tested end-to-end with a real `python -m judb` subprocess, together with a
+  second run proving `--break-on-exception` beats that same file
+  (`tests/test_config.py`), plus resolution/precedence/validation units, the CLI
+  parser's units, and a `figure_format = "interactive"` test showing the first
+  figure of a session is already a live canvas.
+- **Still open, deferred with B5 shipped: a user theme.** B2's rework made
+  `frontend/src/lib/tokens.css` the single place any colour comes from —
+  `--tok-*` for every view of Python (source pane, console cells, traceback) and
+  `--ansi-*` for terminal output — so a user theme is a set of custom-property
+  overrides, not a per-component change. **[OPEN]** where it lives:
+  localStorage-only (pure UI, consistent with the existing light/dark toggle and
+  with the watch list) vs. `[tool.judb.theme]` so a project can ship one.
+  Recommend localStorage first; the Python side deliberately has no colour
+  opinion to override.
 
 ---
 

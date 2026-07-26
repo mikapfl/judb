@@ -25,7 +25,7 @@ from collections.abc import Iterable
 from types import CodeType, FrameType, TracebackType
 from typing import TYPE_CHECKING, Any
 
-from . import mpl_backend
+from . import config, mpl_backend
 from .console import Console
 from .protocol import CellResult
 from .tracebacks import format_traceback
@@ -940,7 +940,7 @@ class Debugger(bdb.Bdb):
 
     # --- server lifecycle -------------------------------------------------
 
-    def start_server(self, *, open_browser: bool = True) -> str:
+    def start_server(self, *, open_browser: bool | None = None) -> str:
         """Start the websocket server (once) and return its tokenized URL.
 
         The server runs on a daemon thread and only touches ``inbound``/
@@ -954,13 +954,17 @@ class Debugger(bdb.Bdb):
         Parameters
         ----------
         open_browser
-            Whether to open a browser tab on first start. Overridden to off by
-            the ``JUDB_NO_BROWSER`` environment variable.
+            Whether to open a browser tab on first start; ``None`` (the
+            default) takes the configured ``open_browser`` setting, so an
+            explicit argument still wins over a config file. Overridden to off
+            either way by the ``JUDB_NO_BROWSER`` environment variable.
 
         Returns
         -------
         The tokenized URL of the debugger UI.
         """
+        if open_browser is None:
+            open_browser = config.settings().open_browser
         if self._server is not None and self._server.pid == os.getpid():
             return self._server.url
         # Either no server yet, or we are a *forked child* that inherited the

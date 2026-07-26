@@ -396,7 +396,13 @@ navigation** — is **shipped**: `open_file` serves any source file, so the Sour
 pane can *browse* a file no frame is in (clearly badged as such, with the
 current-line highlight reserved for the frame) and set a breakpoint in code the
 debuggee has not reached yet — the Breakpoints and Exception panes navigate
-there in one click. Still ahead in Wave B: a minimal settings layer (B5).
+there in one click. B5 — **settings** — is **shipped**, which completes Wave B:
+`judb/config.py` resolves three process-level options (`open_browser`,
+`break_on_exception`, `figure_format`) from `[tool.judb]` in the nearest
+`pyproject.toml`, from `~/.config/judb/config.toml`, and from `python -m judb`'s
+own flags, each layer overriding the previous one key by key. Pure-UI
+preferences (theme, watch list) deliberately stay in the browser, so there is
+still **no bidirectional settings protocol** — the seam is unchanged.
 
 **Phase 3a – saved debug expressions.** Add a way to save + load cell sources
 close to the source, so repeated debugging can re-use cells. Things to consider

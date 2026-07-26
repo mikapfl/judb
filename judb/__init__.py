@@ -21,7 +21,7 @@ except PackageNotFoundError:  # running from a source tree, not installed
 _active_debugger: Debugger | None = None
 
 
-def set_trace(*, open_browser: bool = True) -> Debugger:
+def set_trace(*, open_browser: bool | None = None) -> Debugger:
     """Start (or reuse) a debugger tracing from the caller's frame.
 
     Launches the websocket server and opens a browser tab on first use. Wire it
@@ -31,7 +31,8 @@ def set_trace(*, open_browser: bool = True) -> Debugger:
     ----------
     open_browser
         Whether to open a browser tab on first use. Pass ``False`` to skip the
-        tab, e.g. on a headless box.
+        tab, e.g. on a headless box; ``None`` (the default) follows the
+        configured ``open_browser`` setting (see :mod:`judb.config`).
 
     Returns
     -------

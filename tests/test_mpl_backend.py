@@ -11,7 +11,7 @@ from collections.abc import Iterator
 import matplotlib
 import pytest
 
-from judb import Console, mpl_backend
+from judb import Console, config, mpl_backend
 
 # Outbound messages captured from the interactive backend's emitter.
 Sent = list[dict[str, object]]
@@ -90,6 +90,23 @@ def test_download_renders_requested_vector_format(interactive_backend: Sent) -> 
         replies: list[dict[str, str]] = [m["download"] for m in sent if "download" in m]  # ty: ignore
         assert len(replies) == 1 and replies[0]["format"] == fmt
         assert base64.b64decode(replies[0]["data"]).startswith(head)
+
+
+def test_figure_format_interactive_needs_no_magic(
+    interactive_backend: Sent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`figure_format = "interactive"` starts a session where `%matplotlib judb`
+    would have left it — the first figure of the run is already a live canvas,
+    with no magic typed into a cell (Phase 3 / B5)."""
+    monkeypatch.setattr(config, "_cached", config.Settings(figure_format="interactive"))
+    console = Console()
+
+    assert mpl_backend.is_active()
+    result = console.run_cell(
+        "import matplotlib.pyplot as plt; plt.plot([2, 7, 1]); None"
+    )
+    assert any(mpl_backend.WEBAGG_MIME in o.data for o in result.outputs)
+    assert not any("image/png" in o.data for o in result.outputs)
 
 
 def test_inline_still_produces_png_after_switching_back(
