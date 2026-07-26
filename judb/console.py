@@ -37,7 +37,7 @@ from IPython.core.interactiveshell import InteractiveShell
 from IPython.core.pylabtools import select_figure_formats
 from matplotlib_inline.backend_inline import flush_figures
 
-from . import mpl_backend
+from . import config, mpl_backend
 from .protocol import CellResult, Output
 
 # The buffer the capture classes append to while a cell runs. IPython owns the
@@ -193,6 +193,13 @@ class Console:
         )
         matplotlib.interactive(True)
         select_figure_formats(self.shell, {"png"})
+        # `figure_format = "interactive"` means "start where `%matplotlib judb`
+        # would have put me": select the live WebAgg backend up front, so the
+        # first figure of the session is already interactive. The inline
+        # default is set at import time (above); switching here, before any
+        # figure exists, keeps `_flush_figures` on one branch for a session.
+        if config.settings().figure_format == "interactive":
+            matplotlib.use(mpl_backend.BACKEND)
         # Deterministic, fast completions: the rlcompleter-style path returns the
         # fragment being replaced + full replacements (what `complete` relies on),
         # whereas jedi is slower and, without real type info for frame locals,

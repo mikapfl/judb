@@ -117,11 +117,51 @@ plt.plot(signal)                     # a live, zoomable/pannable canvas
 
 Switch back to static images at any time with `%matplotlib inline`. Standard
 IPython magics work too (`%timeit`, `%who`, `%%time`, `%matplotlib inline`, …).
+To start *every* session that way, set `figure_format = "interactive"` (see
+[Configuration](#configuration)).
 
 Under the hood this is matplotlib's own WebAgg engine (the same one behind
 `%matplotlib notebook`) driven over judb's connection — **no Jupyter kernel
 required**. Interactivity is live whenever the debuggee is paused and freezes on
 Continue, since the figure lives in the paused frame.
+
+## Configuration
+
+judb runs with no configuration at all. When you do want to change how it
+starts, put the settings in your project's `pyproject.toml`:
+
+```toml
+[tool.judb]
+open_browser = true          # open a browser tab on start (the URL is always printed)
+stop_on_entry = true         # `python -m judb`: pause on the target's first line
+break_on_exception = true    # `python -m judb`: land in post-mortem on an uncaught crash
+figure_format = "png"        # "png" for inline images, "interactive" for live figures
+```
+
+`stop_on_entry = false` is the "start it and walk away" mode: the program runs
+at full speed and judb only takes over when something goes wrong (post-mortem
+on the crash) or when your code asks it to (`breakpoint()`). Note that a
+breakpoint you set in the gutter needs the program to still be traced, so plan
+to set them during the entry stop — or put a `breakpoint()` in the code.
+
+The same keys — without the `[tool.judb]` header, since it is judb's own file —
+go in `~/.config/judb/config.toml` (or `$XDG_CONFIG_HOME/judb/config.toml`) to
+apply to every project. A project's settings win over your personal ones,
+key by key, and `python -m judb`'s own flags win over both for a single run:
+
+```bash
+python -m judb --no-stop-on-entry --no-browser train.py --epochs 3
+```
+
+judb's flags go **before** the script; everything after it belongs to the
+script, so `--epochs 3` above reaches `train.py`. Run `python -m judb --help`
+for the full list. A setting judb does not recognise is a warning on stderr, not
+an error — a stale key never stops you from debugging.
+
+Two things live in the browser instead, because that is where they are used: the
+light/dark theme (the toolbar toggle) and your watch expressions, both remembered
+per browser. And `JUDB_NO_BROWSER=1` in the environment suppresses the browser
+tab whatever the configuration says, for headless boxes and CI.
 
 ## Threads and processes
 

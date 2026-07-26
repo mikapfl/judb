@@ -13,10 +13,17 @@ Scope (Phase 3 / Wave A, see docs/PHASE3_PLAN.md A2):
   * ``python -m judb script.py [args]`` and ``python -m judb -m pkg.mod [args]``.
   * ``-c`` is deliberately absent: pdb's ``-c`` takes *debugger commands*, which
     judb drives from the browser instead.
-  * Default-stop behavior is **stop-on-entry** (resolved open decision #3).
+  * Default-stop behavior is **stop-on-entry** (resolved open decision #3);
+    ``stop_on_entry = false`` / ``--no-stop-on-entry`` starts the program
+    instead, so it runs until a ``breakpoint()`` or a crash.
   * The process exits when the target finishes; if it *crashes* (an uncaught
     exception), it drops into post-mortem first so the browser can inspect the
-    failing frame, then exits non-zero (Phase 3 / Wave B, B2).
+    failing frame, then exits non-zero (Phase 3 / Wave B, B2) — unless
+    ``break_on_exception`` is off, in which case the crash propagates as it
+    would have without judb.
+  * judb's own options come *before* the target and are the command-line face
+    of :mod:`judb.config`; everything after the target belongs to the target
+    (Phase 3 / Wave B, B5).
 """
 
 import builtins
@@ -24,10 +31,94 @@ import io
 import sys
 from pathlib import Path
 from types import CodeType
+from typing import Any, NoReturn
 
+from . import config
 from .debugger import Debugger
 
-_USAGE = "usage: python -m judb [-m module | script.py] [args...]"
+_USAGE = """\
+usage: python -m judb [judb options] [-m module | script.py] [args...]
+
+judb options (they override ~/.config/judb/config.toml and [tool.judb]):
+  --browser, --no-browser          open a browser tab on start (default: open)
+  --stop-on-entry,                 pause on the target's first line, or just
+  --no-stop-on-entry               run it (default: pause)
+  --break-on-exception,            stop in post-mortem on an uncaught exception
+  --no-break-on-exception          (default: stop)
+  --figure-format {png,interactive}
+                                   inline PNG figures, or live `%matplotlib
+                                   judb` ones (default: png)
+  -h, --help                       show this message"""
+
+
+# judb's own boolean options: flag → the `judb.config.Settings` field it sets
+# and the value it sets it to.
+_FLAGS: dict[str, tuple[str, bool]] = {
+    "--browser": ("open_browser", True),
+    "--no-browser": ("open_browser", False),
+    "--break-on-exception": ("break_on_exception", True),
+    "--no-break-on-exception": ("break_on_exception", False),
+    "--stop-on-entry": ("stop_on_entry", True),
+    "--no-stop-on-entry": ("stop_on_entry", False),
+}
+
+
+def _fail(message: str) -> NoReturn:
+    """Report a command-line error the way a CLI should, then exit 2."""
+    print(f"judb: error: {message}\n\n{_USAGE}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def _parse_options(argv: list[str]) -> tuple[dict[str, Any], list[str]]:
+    """Split judb's own leading options off the target and its arguments.
+
+    Parsing stops at the first argument that is not one of judb's options (the
+    script, ``-m``, or an explicit ``--``), so the target's own flags are never
+    consumed — ``python -m judb train.py --no-browser`` passes ``--no-browser``
+    to *train.py*, which is the only reading that lets a target have flags of
+    the same name.
+
+    Parameters
+    ----------
+    argv
+        The arguments to ``python -m judb``, without the program name.
+
+    Returns
+    -------
+    The settings overrides the options ask for, and the remaining arguments
+    (the target and everything after it).
+    """
+    overrides: dict[str, Any] = {}
+    args = list(argv)
+    while args:
+        option = args[0]
+        if option in ("-h", "--help"):
+            print(_USAGE)
+            raise SystemExit(0)
+        if option == "--":  # explicit end of judb's options
+            args.pop(0)
+            break
+        if not option.startswith("--"):
+            break
+        args.pop(0)
+        name, has_value, inline = option.partition("=")
+        if name == "--figure-format":
+            if not has_value:
+                if not args:
+                    _fail("--figure-format needs a value")
+                inline = args.pop(0)
+            if inline not in config.FIGURE_FORMATS:
+                choices = ", ".join(config.FIGURE_FORMATS)
+                _fail(f"--figure-format takes one of {choices}, not {inline!r}")
+            overrides["figure_format"] = inline
+            continue
+        if name not in _FLAGS:
+            _fail(f"unknown option: {name}")
+        if has_value:
+            _fail(f"{name} takes no value")
+        field, value = _FLAGS[name]
+        overrides[field] = value
+    return overrides, args
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -36,15 +127,20 @@ def main(argv: list[str] | None = None) -> None:
     Parameters
     ----------
     argv
-        The command-line arguments, defaulting to ``sys.argv[1:]``: either
-        ``script.py [args]`` or ``-m module [args]``, where the trailing
-        arguments belong to the target.
+        The command-line arguments, defaulting to ``sys.argv[1:]``: judb's own
+        options (see ``--help``), then either ``script.py [args]`` or
+        ``-m module [args]``, where the trailing arguments belong to the target.
     """
     args = list(sys.argv[1:] if argv is None else argv)
+    overrides, args = _parse_options(args)
 
-    if not args or args[0] in ("-h", "--help"):
+    if not args:
         print(_USAGE, file=sys.stderr)
-        raise SystemExit(0 if args[:1] in (["-h"], ["--help"]) else 2)
+        raise SystemExit(2)
+
+    # Resolve settings here, at the top: the config files are found relative to
+    # the *invocation's* cwd, and the target is free to chdir once it runs.
+    config.configure(**overrides)
 
     if args[0] == "-c":
         print(
@@ -58,18 +154,21 @@ def main(argv: list[str] | None = None) -> None:
         if len(args) < 2:
             print(f"judb: '-m' needs a module name\n{_USAGE}", file=sys.stderr)
             raise SystemExit(2)
-        _run_module(args[1], args[2:], open_browser=True)
+        _run_module(args[1], args[2:])
         return
 
     target = Path(args[0])
     if not target.is_file():
         print(f"judb: error: no such file: {args[0]}", file=sys.stderr)
         raise SystemExit(2)
-    _run_script(target, args[1:], open_browser=True)
+    _run_script(target, args[1:])
 
 
-def _run_script(script: Path, args: list[str], *, open_browser: bool = True) -> None:
-    """Run ``script`` under a fresh :class:`Debugger`, stopping on entry.
+def _run_script(
+    script: Path, args: list[str], *, open_browser: bool | None = None
+) -> None:
+    """Run ``script`` under a fresh :class:`Debugger` (stopping on entry by
+    default — see the ``stop_on_entry`` setting).
 
     Parameters
     ----------
@@ -78,7 +177,8 @@ def _run_script(script: Path, args: list[str], *, open_browser: bool = True) -> 
     args
         The target's own command-line arguments (``sys.argv[1:]`` for it).
     open_browser
-        Whether to open a browser tab on start.
+        Whether to open a browser tab on start; ``None`` follows the
+        configured ``open_browser`` setting.
     """
     script_path = str(script)
     with io.open_code(script_path) as fp:
@@ -97,7 +197,9 @@ def _run_script(script: Path, args: list[str], *, open_browser: bool = True) -> 
     )
 
 
-def _run_module(module: str, args: list[str], *, open_browser: bool = True) -> None:
+def _run_module(
+    module: str, args: list[str], *, open_browser: bool | None = None
+) -> None:
     """Run ``module`` as ``__main__`` under a fresh :class:`Debugger`.
 
     Parameters
@@ -107,7 +209,8 @@ def _run_module(module: str, args: list[str], *, open_browser: bool = True) -> N
     args
         The target's own command-line arguments.
     open_browser
-        Whether to open a browser tab on start.
+        Whether to open a browser tab on start; ``None`` follows the
+        configured ``open_browser`` setting.
     """
     import runpy
 
@@ -141,7 +244,7 @@ def _run_code(
     sys_path_entry: str,
     argv: list[str],
     main_globals: dict[str, object],
-    open_browser: bool = True,
+    open_browser: bool | None = None,
 ) -> None:
     """Execute a resolved ``code`` object as ``__main__`` under the debugger.
 
@@ -161,7 +264,8 @@ def _run_code(
     main_globals
         The globals to seed the fresh ``__main__`` namespace with.
     open_browser
-        Whether to open a browser tab on start.
+        Whether to open a browser tab on start; ``None`` follows the
+        configured ``open_browser`` setting.
     """
     sys.argv = list(argv)
     sys.path.insert(0, sys_path_entry)
@@ -179,6 +283,11 @@ def _run_code(
 
     dbg = Debugger()
     dbg.start_server(open_browser=open_browser)
+    if not config.settings().stop_on_entry:
+        # Start the program instead of parking on its first line; it then runs
+        # until a `breakpoint()`, a crash, or its own end. The tab is already
+        # open and shows "running…", so there is somewhere to land.
+        dbg.skip_stop_on_entry()
     # Bdb.run traces the exec: it stops at the target's first executable line
     # (stop-on-entry), then the UI drives stepping/continue as usual. BdbQuit
     # (from the UI's "quit") is swallowed by Bdb.run; any *other* exception the
@@ -192,13 +301,25 @@ def _run_code(
         # Land the browser on the failing frame so the crash can be inspected in
         # place (this is `-m judb`'s catch-the-crash workflow; see
         # docs/PHASE3_PLAN.md B2), instead of the process dying with only a
-        # terminal traceback. Trim judb's own runner frames off the top of the
-        # traceback (the `_run_code`/`bdb.run` exec plumbing) so the post-mortem
-        # stack starts at the debuggee's own module frame.
+        # terminal traceback.
+        #
+        # Either way, trim judb's own runner frames off the top of the traceback
+        # (the `_run_code`/`bdb.run` exec plumbing) so what the user sees — the
+        # post-mortem stack, or the printed traceback below — starts at the
+        # debuggee's own module frame.
         tb = exc.__traceback__
         while tb is not None and tb.tb_frame.f_code is not code:
             tb = tb.tb_next
-        dbg.post_mortem(exc.with_traceback(tb) if tb is not None else exc)
+        if tb is not None:
+            exc = exc.with_traceback(tb)
+        if not config.settings().break_on_exception:
+            # Opted out of post-mortem: report the crash the way an undebugged
+            # run would have, so judb costs an unattended run nothing.
+            import traceback
+
+            traceback.print_exception(exc)
+            raise SystemExit(1) from None
+        dbg.post_mortem(exc)
         # Preserve the failure signal for the shell/CI once inspection is done;
         # the browser already showed the traceback, so exit quietly (no second
         # dump to the terminal).
