@@ -1,6 +1,6 @@
 [project]
 name = "judb"
-version = "0.2.0"
+version = "0.3.0"
 description = "A visual debugger for datascience — pudb-style stepping with a notebook-style rich console that runs in the paused frame."
 readme = "README.md"
 requires-python = ">=3.13"
