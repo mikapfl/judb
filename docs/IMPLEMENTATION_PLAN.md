@@ -397,8 +397,8 @@ pane can *browse* a file no frame is in (clearly badged as such, with the
 current-line highlight reserved for the frame) and set a breakpoint in code the
 debuggee has not reached yet — the Breakpoints and Exception panes navigate
 there in one click. B5 — **settings** — is **shipped**, which completes Wave B:
-`judb/config.py` resolves three process-level options (`open_browser`,
-`break_on_exception`, `figure_format`) from `[tool.judb]` in the nearest
+`judb/config.py` resolves four process-level options (`open_browser`,
+`stop_on_entry`, `break_on_exception`, `figure_format`) from `[tool.judb]` in the nearest
 `pyproject.toml`, from `~/.config/judb/config.toml`, and from `python -m judb`'s
 own flags, each layer overriding the previous one key by key. Pure-UI
 preferences (theme, watch list) deliberately stay in the browser, so there is
@@ -414,11 +414,14 @@ close to the source, so repeated debugging can re-use cells. Things to consider
   by anyone debugging this project (per project? per file? per function?
   per line even? security/trust?)
 
+**Phase 3b - layout tweaks.** Responsive layout, layout settings, theming.
+
 **Phase 4 — Differentiators / stretch.** `sys.monitoring` fast breakpoints;
 `ipywidgets`/`%matplotlib widget` via a Comm channel (needs kernel-comm work);
 the data-flow / call-graph pane hinted at in the requirements; remote &
 multi-thread/async debugging; *optional* native **JupyterLab-extension frontend**
 (the third model in §3) as an additional distribution channel over the same backend.
+
 
 **Proposed MVP line: end of Phase 2a.**
 

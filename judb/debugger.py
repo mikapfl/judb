@@ -69,6 +69,9 @@ class Debugger(bdb.Bdb):
         # `user_return`): the debuggee has finished, so resuming must stop
         # tracing rather than step onward into interpreter shutdown.
         self._at_exit_return = False
+        # Set by `skip_stop_on_entry`: swallow the *first* line event instead of
+        # pausing on it (`stop_on_entry = false`). See that method.
+        self._skip_entry_stop = False
         # Identity of the debuggee thread (the one that blocks in the interaction
         # loop and runs cells), and whether a cell is executing right now — both
         # read by `interrupt`, which fires a KeyboardInterrupt into that thread
@@ -84,6 +87,16 @@ class Debugger(bdb.Bdb):
 
     def user_line(self, frame: FrameType) -> None:
         """Called by bdb when we stop at a line we care about."""
+        if self._skip_entry_stop:
+            # `stop_on_entry = false`: this is the target's first line, and
+            # `Bdb.run` stops there by construction (it starts with no
+            # stopframe, so every line is "interesting"). Turn that into a
+            # continue instead of a pause — from here on the debuggee only
+            # stops for a breakpoint, a `breakpoint()`, or a crash.
+            self._skip_entry_stop = False
+            self.set_continue()
+            self._emit({"type": "running"})
+            return
         self.interaction(frame)
 
     def user_return(self, frame: FrameType, return_value: object) -> None:
@@ -1017,6 +1030,20 @@ class Debugger(bdb.Bdb):
             return
         self.reset()
         self.interaction(None, exc)
+
+    def skip_stop_on_entry(self) -> None:
+        """Run the next :meth:`run` without pausing on the target's first line.
+
+        The ``stop_on_entry = false`` half of ``python -m judb``: the program
+        starts under the debugger but does not stop until something asks it to
+        — a ``breakpoint()``, or an uncaught exception via :meth:`post_mortem`.
+
+        Implemented as "swallow the first line event" (see :meth:`user_line`)
+        rather than by not tracing at all, because ``Bdb.run`` installs the
+        trace function itself; the swallowed event is where we turn it into a
+        continue. Call it *before* :meth:`run`.
+        """
+        self._skip_entry_stop = True
 
     def set_trace(self, frame: FrameType | None = None) -> None:
         """Start tracing from ``frame`` (defaults to the caller's frame).

@@ -13,7 +13,9 @@ Scope (Phase 3 / Wave A, see docs/PHASE3_PLAN.md A2):
   * ``python -m judb script.py [args]`` and ``python -m judb -m pkg.mod [args]``.
   * ``-c`` is deliberately absent: pdb's ``-c`` takes *debugger commands*, which
     judb drives from the browser instead.
-  * Default-stop behavior is **stop-on-entry** (resolved open decision #3).
+  * Default-stop behavior is **stop-on-entry** (resolved open decision #3);
+    ``stop_on_entry = false`` / ``--no-stop-on-entry`` starts the program
+    instead, so it runs until a ``breakpoint()`` or a crash.
   * The process exits when the target finishes; if it *crashes* (an uncaught
     exception), it drops into post-mortem first so the browser can inspect the
     failing frame, then exits non-zero (Phase 3 / Wave B, B2) — unless
@@ -39,6 +41,8 @@ usage: python -m judb [judb options] [-m module | script.py] [args...]
 
 judb options (they override ~/.config/judb/config.toml and [tool.judb]):
   --browser, --no-browser          open a browser tab on start (default: open)
+  --stop-on-entry,                 pause on the target's first line, or just
+  --no-stop-on-entry               run it (default: pause)
   --break-on-exception,            stop in post-mortem on an uncaught exception
   --no-break-on-exception          (default: stop)
   --figure-format {png,interactive}
@@ -54,6 +58,8 @@ _FLAGS: dict[str, tuple[str, bool]] = {
     "--no-browser": ("open_browser", False),
     "--break-on-exception": ("break_on_exception", True),
     "--no-break-on-exception": ("break_on_exception", False),
+    "--stop-on-entry": ("stop_on_entry", True),
+    "--no-stop-on-entry": ("stop_on_entry", False),
 }
 
 
@@ -161,7 +167,8 @@ def main(argv: list[str] | None = None) -> None:
 def _run_script(
     script: Path, args: list[str], *, open_browser: bool | None = None
 ) -> None:
-    """Run ``script`` under a fresh :class:`Debugger`, stopping on entry.
+    """Run ``script`` under a fresh :class:`Debugger` (stopping on entry by
+    default — see the ``stop_on_entry`` setting).
 
     Parameters
     ----------
@@ -276,6 +283,11 @@ def _run_code(
 
     dbg = Debugger()
     dbg.start_server(open_browser=open_browser)
+    if not config.settings().stop_on_entry:
+        # Start the program instead of parking on its first line; it then runs
+        # until a `breakpoint()`, a crash, or its own end. The tab is already
+        # open and shows "running…", so there is somewhere to land.
+        dbg.skip_stop_on_entry()
     # Bdb.run traces the exec: it stops at the target's first executable line
     # (stop-on-entry), then the UI drives stepping/continue as usual. BdbQuit
     # (from the UI's "quit") is swallowed by Bdb.run; any *other* exception the

@@ -213,6 +213,8 @@ def test_double_dash_ends_judb_options():
         (["--browser"], {"open_browser": True}),
         (["--break-on-exception"], {"break_on_exception": True}),
         (["--no-break-on-exception"], {"break_on_exception": False}),
+        (["--stop-on-entry"], {"stop_on_entry": True}),
+        (["--no-stop-on-entry"], {"stop_on_entry": False}),
     ],
 )
 def test_each_option_maps_to_its_setting(argv: list[str], expected: dict[str, Any]):
@@ -326,6 +328,82 @@ def test_project_can_turn_off_break_on_exception(tmp_path: Path):
     # The traceback is the debuggee's own: judb's runner frames are trimmed.
     assert "bdb.py" not in output
     assert "judb/__main__.py" not in output
+
+
+def test_no_stop_on_entry_just_runs_the_program(tmp_path: Path):
+    """``--no-stop-on-entry``: the program runs, nobody has to press Continue.
+
+    With the default, this same run would sit on line 1 forever waiting for a
+    browser — which is exactly what makes an unattended or long-warmup run
+    tedious.
+    """
+    project = _project(tmp_path / "proj", "")
+    script = project / "quiet.py"
+    script.write_text("print('RAN TO THE END')\n")
+
+    env = {**os.environ, "JUDB_NO_BROWSER": "1"}
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "judb", "--no-stop-on-entry", str(script)],
+        cwd=project,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        bufsize=1,
+    )
+    try:
+        # No websocket client at all: nothing is supposed to need one.
+        output, _ = proc.communicate(timeout=30)
+        assert proc.returncode == 0
+        assert "RAN TO THE END" in output
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+def test_no_stop_on_entry_still_catches_the_crash(tmp_path: Path):
+    """Running unattended keeps the safety net: the *first* pause is the crash.
+
+    This is the "start it and walk away" workflow — no entry stop, but a
+    post-mortem on the failing frame if it does go wrong.
+    """
+    project, script = _crashing_project(
+        tmp_path, "[tool.judb]\nstop_on_entry = false\n"
+    )
+    env = {**os.environ, "JUDB_NO_BROWSER": "1"}
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "judb", str(script)],
+        cwd=project,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        bufsize=1,
+    )
+    lines: list[str] = []
+    try:
+        url = read_judb_url(proc, lines)
+
+        async def flow() -> dict[str, Any]:
+            async with (
+                ClientSession() as session,
+                session.ws_connect(ws_url(url)) as ws,
+            ):
+                # The very first pause is the post-mortem: no entry stop
+                # happened, and the buffered messages prove it (nothing was
+                # consumed before we connected).
+                first = await recv_type(ws, "paused")
+                await ws.send_json({"cmd": "continue"})
+                await recv_type(ws, "running")
+                return first
+
+        first = asyncio.run(flow())
+        assert first.get("postmortem") is True
+        assert first["function"] == "compute"
+        assert proc.wait(timeout=30) == 1
+    finally:
+        if proc.poll() is None:
+            proc.kill()
 
 
 def test_a_flag_beats_the_project_config(tmp_path: Path):

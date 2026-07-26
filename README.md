@@ -133,9 +133,16 @@ starts, put the settings in your project's `pyproject.toml`:
 ```toml
 [tool.judb]
 open_browser = true          # open a browser tab on start (the URL is always printed)
+stop_on_entry = true         # `python -m judb`: pause on the target's first line
 break_on_exception = true    # `python -m judb`: land in post-mortem on an uncaught crash
 figure_format = "png"        # "png" for inline images, "interactive" for live figures
 ```
+
+`stop_on_entry = false` is the "start it and walk away" mode: the program runs
+at full speed and judb only takes over when something goes wrong (post-mortem
+on the crash) or when your code asks it to (`breakpoint()`). Note that a
+breakpoint you set in the gutter needs the program to still be traced, so plan
+to set them during the entry stop — or put a `breakpoint()` in the code.
 
 The same keys — without the `[tool.judb]` header, since it is judb's own file —
 go in `~/.config/judb/config.toml` (or `$XDG_CONFIG_HOME/judb/config.toml`) to
@@ -143,7 +150,7 @@ apply to every project. A project's settings win over your personal ones,
 key by key, and `python -m judb`'s own flags win over both for a single run:
 
 ```bash
-python -m judb --no-browser --no-break-on-exception train.py --epochs 3
+python -m judb --no-stop-on-entry --no-browser train.py --epochs 3
 ```
 
 judb's flags go **before** the script; everything after it belongs to the

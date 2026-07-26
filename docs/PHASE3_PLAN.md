@@ -365,11 +365,23 @@ Today the Source pane always shows the current/selected frame's file
 A minimal config layer rather than a framework: `judb/config.py` is ~200 lines
 and the whole surface is three keys.
 
-- **Scope, as planned.** `open_browser`, `break_on_exception` and
+- **Scope, as planned, plus one.** `open_browser`, `break_on_exception` and
   `figure_format` (`"png"` vs `"interactive"`, i.e. starting where
   `%matplotlib judb` would have left you) — the process-level options, resolved
   on the Python side. The theme and the watch list stay client-side, so **no
   bidirectional settings-sync protocol was invented**, as the [DECISION] asked.
+- **`stop_on_entry` joined them** (`--no-stop-on-entry`), which A2's decision #3
+  had foreseen as a flag and never built. Off, the program runs at full speed
+  and judb takes over only on a crash or a `breakpoint()` — "start it and walk
+  away", the complement to `break_on_exception` and the reason to keep
+  stop-on-entry as the *default* rather than the only behaviour. It is
+  implemented as "swallow the first line event, then `set_continue()`"
+  (`Debugger.skip_stop_on_entry`), because `Bdb.run` installs the trace
+  function itself; that first event is the only place to turn the entry stop
+  into a continue. Consequence, documented in the README: with no breakpoints
+  set, bdb's `set_continue` untraces the program (as it already does for any
+  Continue with no breakpoints), so a *gutter* breakpoint needs either the
+  entry stop or a `breakpoint()` in the code.
 - **Layers, most specific first:** an explicit argument (`set_trace(open_browser=
   False)`), a `python -m judb` flag, the nearest `pyproject.toml`'s
   `[tool.judb]`, `$XDG_CONFIG_HOME/judb/config.toml` (judb's own file, so keys
@@ -386,6 +398,7 @@ and the whole surface is three keys.
   trade — the debugger is the thing the user actually asked for. A mistyped
   *command-line flag*, by contrast, exits 2: that one was typed on purpose.
 - **`python -m judb` grew its first options** (`--browser/--no-browser`,
+  `--stop-on-entry/--no-stop-on-entry`,
   `--break-on-exception/--no-break-on-exception`, `--figure-format`, and a real
   `--help`). Parsing stops at the target, so `python -m judb train.py
   --no-browser` passes `--no-browser` to *train.py* — anything else would make a
@@ -402,8 +415,10 @@ and the whole surface is three keys.
   tested end-to-end with a real `python -m judb` subprocess, together with a
   second run proving `--break-on-exception` beats that same file
   (`tests/test_config.py`), plus resolution/precedence/validation units, the CLI
-  parser's units, and a `figure_format = "interactive"` test showing the first
-  figure of a session is already a live canvas.
+  parser's units, a `figure_format = "interactive"` test showing the first
+  figure of a session is already a live canvas, and two for `stop_on_entry =
+  false` (a script that runs to completion with *no* websocket client at all,
+  and a crashing one whose very first pause is the post-mortem).
 - **Still open, deferred with B5 shipped: a user theme.** B2's rework made
   `frontend/src/lib/tokens.css` the single place any colour comes from —
   `--tok-*` for every view of Python (source pane, console cells, traceback) and

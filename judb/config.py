@@ -61,6 +61,11 @@ class Settings:
     break_on_exception
         Whether ``python -m judb`` catches an uncaught exception into
         post-mortem instead of letting the process die with a traceback.
+    stop_on_entry
+        Whether ``python -m judb`` pauses on the target's first line. With
+        ``false`` the program simply runs — until a ``breakpoint()``, an
+        uncaught exception, or its own end — which is the "run it and catch the
+        crash" workflow.
     figure_format
         How matplotlib figures come back: ``"png"`` for inline snapshots, or
         ``"interactive"`` to start with judb's live WebAgg backend already
@@ -69,6 +74,7 @@ class Settings:
 
     open_browser: bool = True
     break_on_exception: bool = True
+    stop_on_entry: bool = True
     figure_format: str = "png"
 
 
@@ -159,7 +165,7 @@ def _validated(raw: Mapping[str, Any], *, source: str) -> dict[str, Any]:
                 options = ", ".join(repr(fmt) for fmt in FIGURE_FORMATS)
                 _warn(f"ignoring figure_format = {value!r} in {source}: use {options}")
                 continue
-        elif key in ("open_browser", "break_on_exception"):
+        elif key in ("open_browser", "break_on_exception", "stop_on_entry"):
             if not isinstance(value, bool):
                 _warn(f"ignoring {key} = {value!r} in {source}: expected true or false")
                 continue

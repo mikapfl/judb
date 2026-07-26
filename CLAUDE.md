@@ -175,7 +175,8 @@ debuggee and (eventually) the web server:
   frontend can render them with standard tooling (`@jupyterlab/rendermime`) with
   **zero backend change**. This mime-bundle format is a load-bearing contract; keep it.
 - **`judb/config.py`** — the process-level settings (`open_browser`,
-  `break_on_exception`, `figure_format`), resolved once per process from an
+  `stop_on_entry`, `break_on_exception`, `figure_format`), resolved once per
+  process from an
   explicit argument → a `python -m judb` flag (`configure`) → the nearest
   `pyproject.toml`'s `[tool.judb]` → `$XDG_CONFIG_HOME/judb/config.toml` →
   defaults, merged per key. Read it via `config.settings()`; a `bool | None`
