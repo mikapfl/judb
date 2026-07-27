@@ -613,31 +613,6 @@ test("the source keeps 80 columns — the console folds under it when it can't",
     expect(Math.abs(wideConsole.y - wideSource.y)).toBeLessThan(2);
     expect(await sourceColumns(page)).toBeGreaterThanOrEqual(80);
 
-    // Nor can the user drag past the floor. Drag the source/console splitter
-    // right first — the source may grow as far as you like — then haul it all
-    // the way left: it stops at 80 columns instead of collapsing.
-    const dragSplitterTo = async (x: number) => {
-      const splitter = page
-        .locator("main > .splitpanes > .splitpanes__pane")
-        .first()
-        .locator("> .splitpanes > .splitpanes__splitter");
-      const grip = (await splitter.boundingBox())!;
-      const y = grip.y + grip.height / 2;
-      await page.mouse.move(grip.x + grip.width / 2, y);
-      await page.mouse.down();
-      await page.mouse.move(x, y, { steps: 10 });
-      await page.mouse.up();
-    };
-
-    await dragSplitterTo(1250);
-    const grown = await sourceColumns(page);
-    expect(grown).toBeGreaterThan(120);
-
-    await dragSplitterTo(20);
-    const floored = await sourceColumns(page);
-    expect(floored).toBeLessThan(grown); // the drag really did move it back…
-    expect(floored).toBeGreaterThanOrEqual(80); // …and stopped at the floor.
-
     // Squeezed but still wide enough for both: the split shifts in the source's
     // favour rather than letting it drop below the floor.
     await page.setViewportSize({ width: 1100, height: 900 });
@@ -662,6 +637,61 @@ test("the source keeps 80 columns — the console folds under it when it can't",
       expect(source.width).toBeGreaterThan(700);
     }).toPass({ timeout: 5_000 });
     expect(await sourceColumns(page)).toBeGreaterThanOrEqual(80);
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
+
+/** Drag the source/console splitter to an absolute x. */
+async function dragSplitterTo(page: Page, x: number): Promise<void> {
+  const splitter = page
+    .locator("main > .splitpanes > .splitpanes__pane")
+    .first()
+    .locator("> .splitpanes > .splitpanes__splitter");
+  const grip = (await splitter.boundingBox())!;
+  const y = grip.y + grip.height / 2;
+  await page.mouse.move(grip.x + grip.width / 2, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y, { steps: 10 });
+  await page.mouse.up();
+}
+
+test("a source narrower than 80 columns is the user's call, and it sticks", async ({
+  page,
+}) => {
+  const { proc, url } = await startDebuggee();
+
+  try {
+    await page.setViewportSize({ width: 1500, height: 900 });
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+
+    // Haul the splitter left, well past the floor: the user wants a sliver of
+    // source and a wide console, and gets it.
+    await dragSplitterTo(page, 20);
+    const slim = await sourceColumns(page);
+    expect(slim).toBeLessThan(40);
+
+    // The window moving under them does not overrule that — neither wider…
+    await page.setViewportSize({ width: 1700, height: 900 });
+    await page.waitForTimeout(300);
+    expect(await sourceColumns(page)).toBeLessThan(60);
+    // …nor narrower.
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.waitForTimeout(300);
+    expect(await sourceColumns(page)).toBeLessThan(40);
+
+    // Dragging back to a comfortable width re-arms the automatic floor: from
+    // here on the window is once again held to 80 columns.
+    await page.setViewportSize({ width: 1500, height: 900 });
+    await page.waitForTimeout(300);
+    await dragSplitterTo(page, 825);
+    expect(await sourceColumns(page)).toBeGreaterThanOrEqual(80);
+
+    await page.setViewportSize({ width: 1100, height: 900 });
+    await expect(async () => {
+      expect(await sourceColumns(page)).toBeGreaterThanOrEqual(80);
+    }).toPass({ timeout: 5_000 });
   } finally {
     if (proc.exitCode === null) proc.kill("SIGKILL");
   }

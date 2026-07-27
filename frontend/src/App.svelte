@@ -11,7 +11,13 @@
   import BreakpointsPane from "./panes/BreakpointsPane.svelte";
   import ExceptionPane from "./panes/ExceptionPane.svelte";
   import { conn } from "./lib/connection.svelte";
-  import { layout, SECONDARY_PANES, type PaneId } from "./lib/layout.svelte";
+  import {
+    layout,
+    reconcileSource,
+    MIN_PANE_PCT,
+    SECONDARY_PANES,
+    type PaneId,
+  } from "./lib/layout.svelte";
 
   $effect(() => {
     conn.connect();
@@ -22,15 +28,25 @@
   // Share of the working area the source gets. It means width while the console
   // is beside it and height once the console has folded under — the same number
   // either way, so a fold doesn't throw away the split the user chose.
-  let sourceSize = $state(50);
+  let split = $state({ size: 50, userNarrowed: false });
 
-  // Enforce the 80-column floor on *window* resize. Dragging is already bounded
-  // by the pane's `minSize`, but a shrinking window leaves percentages untouched
-  // and would quietly squeeze the source below the floor.
+  // Keep the 80-column floor against the *window*, and out of the user's way.
+  // The two are told apart by what changed: a new container width is the window
+  // resizing (percentages don't shrink on their own, so the pane would quietly
+  // fall below the floor), while a size that moved on its own is a drag — and a
+  // drag below the floor is a choice, which `reconcileSource` then remembers.
+  let lastWidth = 0;
   $effect(() => {
-    const min = layout.sourceMinPct;
-    if (layout.stackConsole) return;
-    if (untrack(() => sourceSize) < min) sourceSize = Math.min(min, 85);
+    const width = layout.width;
+    const next = reconcileSource(
+      { size: split.size, userNarrowed: split.userNarrowed },
+      layout.sourceMinPct,
+      width !== untrack(() => lastWidth),
+      layout.stackConsole,
+    );
+    lastWidth = width;
+    if (next.size !== split.size) split.size = next.size;
+    if (next.userNarrowed !== split.userNarrowed) split.userNarrowed = next.userNarrowed;
   });
 
   // How much height the secondary area gets — more of it once it has reflowed
@@ -96,15 +112,14 @@
            One Splitpanes with a reactive `horizontal` rather than two behind an
            `{#if}`, so folding never remounts the console and loses cell text. -->
       <Splitpanes horizontal={layout.stackConsole} theme="" class="judb-split">
-        <Pane
-          bind:size={sourceSize}
-          minSize={layout.stackConsole ? 20 : layout.sourceMinPct}
-        >
+        <!-- `minSize` is only "still a pane": the 80-column floor is enforced
+             against window resizes above, not against the hand on the splitter. -->
+        <Pane bind:size={split.size} minSize={MIN_PANE_PCT}>
           <PaneBox title="Source">
             <SourcePane />
           </PaneBox>
         </Pane>
-        <Pane size={100 - sourceSize} minSize={15}>
+        <Pane size={100 - split.size} minSize={MIN_PANE_PCT}>
           <PaneBox title="Notebook console — runs in the paused frame">
             <ConsolePane />
           </PaneBox>

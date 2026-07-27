@@ -1,13 +1,19 @@
 // Responsive layout: how the panes are arranged at the current window width,
 // and which of the secondary panes are on screen at all.
 //
-// One rule drives the top half: **the Source pane is never narrower than PEP 8's
-// 80 columns**. Debugging is reading code, and code that soft-wraps at column 60
-// is code you can't read. So the console sits *beside* the source only while
-// both can have a usable width; below that it folds *under* it, and the source
-// gets the full width. The floor is measured in real characters of the editor's
-// own font (`measureCharWidth`), not guessed in pixels, so it holds up when the
-// user's monospace face or `--font-size` differs from ours.
+// One rule drives the top half: **the window never squeezes the Source pane
+// below PEP 8's 80 columns**. Debugging is reading code, and code that soft-wraps
+// at column 60 is code you can't read. So the console sits *beside* the source
+// only while both can have a usable width; below that it folds *under* it, and
+// the source gets the full width. The floor is measured in real characters of
+// the editor's own font (`measureCharWidth`), not guessed in pixels, so it holds
+// up when the user's monospace face or `--font-size` differs from ours.
+//
+// The floor is a floor on *automatic* layout, not a veto on the user: drag the
+// splitter narrower than 80 columns and that is honoured, and honoured from then
+// on (`reconcileSource`), because someone who wants a sliver of source and a
+// wide console is entitled to it. Drag back to the floor and the automatic
+// protection re-arms.
 //
 // The bottom half is a grid that reflows: every secondary pane side by side
 // while each still gets `MIN_SECONDARY_PX`, then two rows, then three. Panes the
@@ -119,6 +125,50 @@ export function distribute<T>(items: T[], rows: number): T[][] {
 export function pctOf(px: number, total: number): number {
   if (total <= 0) return 0;
   return Math.max(0, Math.min(90, (px / total) * 100));
+}
+
+/** How narrow the splitter may drag the source or the console, in percent.
+ *  Not the 80-column floor — this is only "still a pane, not a sliver". */
+export const MIN_PANE_PCT = 10;
+
+/** Widest the automatic floor will push the source, leaving the console alive. */
+const MAX_SOURCE_PCT = 85;
+
+/** Percentage-point slack: a size the clamp itself just wrote must not read
+ *  back as the user having chosen something narrower. */
+const PCT_EPSILON = 0.5;
+
+/** The source pane's share of the working area, and whether the user has
+ *  deliberately dragged it below the 80-column floor. */
+export interface SourceSplit {
+  size: number;
+  userNarrowed: boolean;
+}
+
+/**
+ * Reconcile the source pane's share after something moved it.
+ *
+ * The whole point is *which* something. A window resize must not silently
+ * squeeze the editor below the floor, so it gets pushed back up; a drag is the
+ * user saying what they want, so it stands — and it keeps standing through
+ * later resizes, until they drag back to the floor themselves.
+ *
+ * While the console is folded under, `size` is a share of *height* and the
+ * column floor means nothing, so nothing is decided (and no drag down there is
+ * mistaken for a width preference).
+ */
+export function reconcileSource(
+  current: SourceSplit,
+  minPct: number,
+  windowChanged: boolean,
+  stacked: boolean,
+): SourceSplit {
+  if (stacked) return current;
+  if (!windowChanged) {
+    return { ...current, userNarrowed: current.size < minPct - PCT_EPSILON };
+  }
+  if (current.userNarrowed || current.size >= minPct) return current;
+  return { size: Math.min(minPct, MAX_SOURCE_PCT), userNarrowed: false };
 }
 
 function loadClosed(): PaneId[] {

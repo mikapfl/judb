@@ -214,8 +214,10 @@ debuggee and (eventually) the web server:
   highlight is reserved for the frame (a browsed file gets the weaker
   `setMarkedLine` instead, since nothing is executing there).
   `src/lib/layout.svelte.ts` owns the *arrangement*: the Source pane's
-  80-column floor (measured in the editor's own font, enforced both as
-  `minSize` and as a resize clamp), whether the console sits beside the source
+  80-column floor (measured in the editor's own font, and a floor on the
+  *window* only — `reconcileSource` distinguishes a container-width change,
+  which is pushed back up to the floor, from a splitter drag, which stands
+  however narrow, so the floor is never a veto on the user), whether the console sits beside the source
   or has folded under it, how the secondary panes reflow into one/two/three
   rows, and which of them the user has closed (persisted as the **closed** list,
   so a pane added later isn't invisible to existing users). `lib/PaneMenu.svelte`

@@ -63,8 +63,9 @@ hasn't reached yet and continue straight to it.
 The layout follows the window: the source keeps at least 80 columns of code
 (PEP 8's line length) at any size, folding the console underneath it rather than
 squeezing it, and the lower panes reflow into two or three rows on a narrow
-screen. Close any lower pane with the × in its header when you want the room;
-**▤ Panes** in the toolbar brings it back.
+screen. That is a floor on what the *window* does — drag the splitter narrower
+yourself and it stays where you put it. Close any lower pane with the × in its
+header when you want the room; **▤ Panes** in the toolbar brings it back.
 
 You can also wire judb up as the
 `breakpoint()` hook, no code change needed:

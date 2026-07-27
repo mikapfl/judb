@@ -7,6 +7,7 @@ import {
   MIN_CONSOLE_PX,
   MIN_SECONDARY_PX,
   pctOf,
+  reconcileSource,
   SECONDARY_PANES,
   secondaryRows,
   sourceMinPx,
@@ -38,6 +39,58 @@ describe("the 80-column source floor", () => {
 
   it("assumes room before the first measurement, so nothing flashes stacked", () => {
     expect(consoleFitsBeside(0, FALLBACK_CHAR_PX)).toBe(true);
+  });
+});
+
+describe("the floor is against the window, not the user", () => {
+  const wide = { size: 60, userNarrowed: false };
+  const narrow = { size: 30, userNarrowed: false };
+
+  it("pushes the source back up when the window squeezed it", () => {
+    expect(reconcileSource(narrow, 50, true, false)).toEqual({
+      size: 50,
+      userNarrowed: false,
+    });
+  });
+
+  it("leaves a comfortable pane alone on resize", () => {
+    expect(reconcileSource(wide, 50, true, false)).toEqual(wide);
+  });
+
+  it("honours a drag below the floor", () => {
+    // The size moved without the window changing — that is the splitter.
+    expect(reconcileSource(narrow, 50, false, false)).toEqual({
+      size: 30,
+      userNarrowed: true,
+    });
+  });
+
+  it("keeps honouring it through later window resizes", () => {
+    const chosen = { size: 30, userNarrowed: true };
+    expect(reconcileSource(chosen, 50, true, false)).toEqual(chosen);
+    expect(reconcileSource(chosen, 70, true, false)).toEqual(chosen);
+  });
+
+  it("re-arms the floor once the user drags back to it", () => {
+    const back = reconcileSource({ size: 55, userNarrowed: true }, 50, false, false);
+    expect(back.userNarrowed).toBe(false);
+    // …and from then on the window is held to the floor again.
+    expect(reconcileSource({ ...back, size: 30 }, 50, true, false).size).toBe(50);
+  });
+
+  it("does not mistake the clamp's own write for a user choice", () => {
+    const clamped = reconcileSource(narrow, 50, true, false);
+    expect(reconcileSource(clamped, 50, false, false).userNarrowed).toBe(false);
+  });
+
+  it("never pushes the source so wide the console is gone", () => {
+    expect(reconcileSource({ size: 10, userNarrowed: false }, 95, true, false).size).toBe(85);
+  });
+
+  it("decides nothing while the console is folded under", () => {
+    // Down there `size` is a share of height, so no drag means a width choice.
+    expect(reconcileSource(narrow, 50, false, true)).toEqual(narrow);
+    expect(reconcileSource(narrow, 50, true, true)).toEqual(narrow);
   });
 });
 

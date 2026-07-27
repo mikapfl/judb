@@ -417,12 +417,19 @@ close to the source, so repeated debugging can re-use cells. Things to consider
 **Phase 3b - layout tweaks.** Responsive layout, layout settings, theming.
 
 - **Responsive layout — ✅ done** (`frontend/src/lib/layout.svelte.ts`). One rule
-  drives the top half: the Source pane never gets narrower than **80 columns**
-  (PEP 8), measured in the editor's *own* font via a canvas `measureText` rather
-  than guessed in pixels, so it holds for a user with a different monospace face
-  or `--font-size`. That floor is enforced twice — as the pane's `minSize` (so a
-  drag can't cross it) and as a clamp on window resize (percentages don't shrink
-  on their own) — and when 80 columns plus a usable console no longer fit side
+  drives the top half: the *window* never squeezes the Source pane below **80
+  columns** (PEP 8), measured in the editor's *own* font via a canvas
+  `measureText` rather than guessed in pixels, so it holds for a user with a
+  different monospace face or `--font-size`. **[DECISION] the floor binds the
+  layout, not the user.** A first cut enforced it as the pane's `minSize`, which
+  also made it a veto on the splitter — someone who wants a sliver of source and
+  a wide console could not have one. Now `reconcileSource` tells the two causes
+  apart by *what changed*: a new container width is the window (percentages
+  don't shrink on their own, so the pane would quietly fall below the floor and
+  is pushed back up), while a size that moved on its own is a drag, which stands
+  — and keeps standing through later resizes until the user drags back to the
+  floor, which re-arms the automatic protection. `minSize` is now only "still a
+  pane, not a sliver" (`MIN_PANE_PCT`). When 80 columns plus a usable console no longer fit side
   by side, the console **folds under** the source, which takes the full width
   back. The fold flips the *same* `Splitpanes`' `horizontal` prop rather than
   swapping in a second one behind an `{#if}`, so folding never remounts the
