@@ -58,7 +58,15 @@ added, deleted, and reordered. Values you keep coming back to go in the **Watch*
 pane — pin an expression like `df.shape` or `arr.mean()` and it is re-evaluated
 every time you stop, change frame, or run a cell. *Open file…* in the Source
 pane shows any file of your project, so you can set a breakpoint in code the run
-hasn't reached yet and continue straight to it. You can also wire judb up as the
+hasn't reached yet and continue straight to it.
+
+The layout follows the window: the source keeps at least 80 columns of code
+(PEP 8's line length) at any size, folding the console underneath it rather than
+squeezing it, and the lower panes reflow into two or three rows on a narrow
+screen. Close any lower pane with the × in its header when you want the room;
+**▤ Panes** in the toolbar brings it back.
+
+You can also wire judb up as the
 `breakpoint()` hook, no code change needed:
 
 ```bash
