@@ -15,14 +15,17 @@ Read `docs/REQUIREMENT_ANALYSIS.md` (motivation) and `docs/IMPLEMENTATION_PLAN.m
 changes. The plan is the source of truth for *why* things are shaped the way they
 are; its §5 defines the phases and each phase's exit criterion.
 
-**Current status: Phase 3 Wave A shipped — `judb 0.1.0` is on PyPI** (`pip install
-judb` works; entry points `python -m judb`, `pytest --pdbcls`, and `set_trace` all
-land in the browser UI). Wave B (deepen the debugger) is **complete**; see
-`docs/PHASE3_PLAN.md`. Within it, **B1 (conditional/temporary/ignore breakpoints
+**Current status: Phase 3 Wave A shipped — `judb` is on PyPI, released through
+`0.3.0`** (`pip install judb` works; entry points `python -m judb`,
+`pytest --pdbcls`, and `set_trace` all land in the browser UI). Wave B (deepen
+the debugger) is **complete**; see `docs/PHASE3_PLAN.md`. Within it, **B1
+(conditional/temporary/ignore breakpoints
 + the Breakpoints pane), B2 (break-on-exception → post-mortem + the Exception
 pane), B3 (watch expressions + the Watch pane), B4 (multi-file `open_file`
-navigation) and B5 (settings — `judb/config.py`) are all done**; next up is
-Phase 3a (saved/loadable debug cells). Phase 2 (four-pane app, the MVP) is complete. Phase 1
+navigation) and B5 (settings — `judb/config.py`) are all done**. Phase 3b's
+**responsive layout** (80-column source floor, folding console, reflowing +
+closable secondary panes — `frontend/src/lib/layout.svelte.ts`) is done too;
+next up is Phase 3a (saved/loadable debug cells). Phase 2 (four-pane app, the MVP) is complete. Phase 1
 (vertical slice) is complete: `judb.set_trace()` starts a localhost websocket server
 (`judb/server.py`) and opens a browser page served from `judb/static/index.html`.
 That page is now the **built Svelte SPA** (source in `frontend/`, see below), not
@@ -209,7 +212,16 @@ debuggee and (eventually) the web server:
   acting on "the file on screen" — the gutter, every breakpoint command — goes
   through `shownFilename`/`shownSource`/`shownBreakpoints`, and the current-line
   highlight is reserved for the frame (a browsed file gets the weaker
-  `setMarkedLine` instead, since nothing is executing there). The backend
+  `setMarkedLine` instead, since nothing is executing there).
+  `src/lib/layout.svelte.ts` owns the *arrangement*: the Source pane's
+  80-column floor (measured in the editor's own font, and a floor on the
+  *window* only — `reconcileSource` distinguishes a container-width change,
+  which is pushed back up to the floor, from a splitter drag, which stands
+  however narrow, so the floor is never a veto on the user), whether the console sits beside the source
+  or has folded under it, how the secondary panes reflow into one/two/three
+  rows, and which of them the user has closed (persisted as the **closed** list,
+  so a pane added later isn't invisible to existing users). `lib/PaneMenu.svelte`
+  is the only way back for a closed pane. The backend
   contract is unchanged: same queues, same mime bundles.
 
 ### Three invariants that are easy to break

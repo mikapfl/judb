@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { Splitpanes, Pane } from "svelte-splitpanes";
   import Toolbar from "./lib/Toolbar.svelte";
   import PaneBox from "./lib/PaneBox.svelte";
@@ -10,9 +11,55 @@
   import BreakpointsPane from "./panes/BreakpointsPane.svelte";
   import ExceptionPane from "./panes/ExceptionPane.svelte";
   import { conn } from "./lib/connection.svelte";
+  import {
+    layout,
+    reconcileSource,
+    MIN_PANE_PCT,
+    SECONDARY_PANES,
+    type PaneId,
+  } from "./lib/layout.svelte";
 
   $effect(() => {
     conn.connect();
+  });
+
+  const title = (id: PaneId) => SECONDARY_PANES.find((p) => p.id === id)!.title;
+
+  // Share of the working area the source gets. It means width while the console
+  // is beside it and height once the console has folded under — the same number
+  // either way, so a fold doesn't throw away the split the user chose.
+  let split = $state({ size: 50, userNarrowed: false });
+
+  // Keep the 80-column floor against the *window*, and out of the user's way.
+  // The two are told apart by what changed: a new container width is the window
+  // resizing (percentages don't shrink on their own, so the pane would quietly
+  // fall below the floor), while a size that moved on its own is a drag — and a
+  // drag below the floor is a choice, which `reconcileSource` then remembers.
+  let lastWidth = 0;
+  $effect(() => {
+    const width = layout.width;
+    const next = reconcileSource(
+      { size: split.size, userNarrowed: split.userNarrowed },
+      layout.sourceMinPct,
+      width !== untrack(() => lastWidth),
+      layout.stackConsole,
+    );
+    lastWidth = width;
+    if (next.size !== split.size) split.size = next.size;
+    if (next.userNarrowed !== split.userNarrowed) split.userNarrowed = next.userNarrowed;
+  });
+
+  // How much height the secondary area gets — more of it once it has reflowed
+  // into two or three rows, or none at all when every pane in it is closed.
+  // Only reassigned when the row count actually changes, so a user's drag
+  // survives everything else.
+  let secondarySize = $state(20);
+  let rowCount = layout.rows.length;
+  $effect(() => {
+    const rows = layout.rows.length;
+    if (rows === rowCount) return;
+    rowCount = rows;
+    secondarySize = rows >= 3 ? 46 : rows === 2 ? 34 : 20;
   });
 
   // The finished overlay is dismissable so the user can still inspect whatever
@@ -39,60 +86,70 @@
   </div>
 {/if}
 
-<main>
+<!-- The content of one secondary pane. They are laid out by id (see
+     layout.svelte.ts), so the grid can reflow without knowing what's inside. -->
+{#snippet secondaryPane(id: PaneId)}
+  {#if id === "breakpoints"}
+    <BreakpointsPane />
+  {:else if id === "stack"}
+    <StackPane />
+  {:else if id === "variables"}
+    <VariablesPane />
+  {:else if id === "watch"}
+    <WatchPane />
+  {:else if id === "exception"}
+    <ExceptionPane />
+  {/if}
+{/snippet}
+
+<main {@attach layout.observe}>
   <!-- Primary divider is top/bottom: the working area (Source + Console) gets
-       most of the height; Variables + Call stack sit side by side underneath. -->
+       most of the height; the secondary panes reflow underneath. -->
   <Splitpanes horizontal theme="" class="judb-split">
-    <Pane size={80} minSize={30}>
-      <Splitpanes theme="" class="judb-split">
-        <Pane size={50} minSize={20}>
+    <Pane size={layout.rows.length ? 100 - secondarySize : 100} minSize={30}>
+      <!-- Source + console: side by side while both fit, stacked (console
+           under) once 80 columns of source and a usable console no longer do.
+           One Splitpanes with a reactive `horizontal` rather than two behind an
+           `{#if}`, so folding never remounts the console and loses cell text. -->
+      <Splitpanes horizontal={layout.stackConsole} theme="" class="judb-split">
+        <!-- `minSize` is only "still a pane": the 80-column floor is enforced
+             against window resizes above, not against the hand on the splitter. -->
+        <Pane bind:size={split.size} minSize={MIN_PANE_PCT}>
           <PaneBox title="Source">
             <SourcePane />
           </PaneBox>
         </Pane>
-        <Pane size={50} minSize={20}>
+        <Pane size={100 - split.size} minSize={MIN_PANE_PCT}>
           <PaneBox title="Notebook console — runs in the paused frame">
             <ConsolePane />
           </PaneBox>
         </Pane>
       </Splitpanes>
     </Pane>
-    <Pane size={20} minSize={10}>
-      <Splitpanes theme="" class="judb-split">
-        <Pane size={20} minSize={10}>
-          <PaneBox title="Breakpoints">
-            <BreakpointsPane />
-          </PaneBox>
-        </Pane>
-        <Pane size={24} minSize={12}>
-          <PaneBox title="Call stack">
-            <StackPane />
-          </PaneBox>
-        </Pane>
-        <!-- Variables and Watch share a column: both answer "what is this value
-             right now", the difference being that a watch is an expression the
-             user pinned (and it runs code), a local is just there. -->
-        <Pane size={34} minSize={15}>
-          <Splitpanes horizontal theme="" class="judb-split">
-            <Pane size={60} minSize={20}>
-              <PaneBox title="Variables">
-                <VariablesPane />
-              </PaneBox>
+    <!-- Nothing left open down here is a legitimate state: the whole row goes,
+         and ▤ Panes in the toolbar is how it comes back. -->
+    {#if layout.rows.length}
+      <Pane bind:size={secondarySize} minSize={10}>
+        <Splitpanes horizontal theme="" class="judb-split">
+          {#each layout.rows as row, i (i)}
+            <Pane size={100 / layout.rows.length} minSize={10}>
+              <Splitpanes theme="" class="judb-split">
+                {#each row as id (id)}
+                  <Pane size={100 / row.length} minSize={10}>
+                    <PaneBox
+                      title={title(id)}
+                      onClose={() => layout.setOpen(id, false)}
+                    >
+                      {@render secondaryPane(id)}
+                    </PaneBox>
+                  </Pane>
+                {/each}
+              </Splitpanes>
             </Pane>
-            <Pane size={40} minSize={15}>
-              <PaneBox title="Watch">
-                <WatchPane />
-              </PaneBox>
-            </Pane>
-          </Splitpanes>
-        </Pane>
-        <Pane size={22} minSize={10}>
-          <PaneBox title="Exception">
-            <ExceptionPane />
-          </PaneBox>
-        </Pane>
-      </Splitpanes>
-    </Pane>
+          {/each}
+        </Splitpanes>
+      </Pane>
+    {/if}
   </Splitpanes>
 </main>
 

@@ -416,6 +416,42 @@ close to the source, so repeated debugging can re-use cells. Things to consider
 
 **Phase 3b - layout tweaks.** Responsive layout, layout settings, theming.
 
+- **Responsive layout — ✅ done** (`frontend/src/lib/layout.svelte.ts`). One rule
+  drives the top half: the *window* never squeezes the Source pane below **80
+  columns** (PEP 8), measured in the editor's *own* font via a canvas
+  `measureText` rather than guessed in pixels, so it holds for a user with a
+  different monospace face or `--font-size`. **[DECISION] the floor binds the
+  layout, not the user.** A first cut enforced it as the pane's `minSize`, which
+  also made it a veto on the splitter — someone who wants a sliver of source and
+  a wide console could not have one. Now `reconcileSource` tells the two causes
+  apart by *what changed*: a new container width is the window (percentages
+  don't shrink on their own, so the pane would quietly fall below the floor and
+  is pushed back up), while a size that moved on its own is a drag, which stands
+  — and keeps standing through later resizes until the user drags back to the
+  floor, which re-arms the automatic protection. `minSize` is now only "still a
+  pane, not a sliver" (`MIN_PANE_PCT`). When 80 columns plus a usable console no longer fit side
+  by side, the console **folds under** the source, which takes the full width
+  back. The fold flips the *same* `Splitpanes`' `horizontal` prop rather than
+  swapping in a second one behind an `{#if}`, so folding never remounts the
+  console and discards half-typed cells. The secondary panes are a grid that
+  reflows: all in one row while each still gets `MIN_SECONDARY_PX`, then two
+  rows, then three (never four — past that, close something). The toolbar is
+  part of this: it wraps and drops its button labels to bare glyphs below
+  860 px, because a toolbar that overflows scrolls `<body>` horizontally and
+  slides the whole pane grid out from under the pointer (it did).
+- **Closable panes + the ▤ Panes menu — ✅ done.** Every *secondary* pane has an
+  × in its header; Source and the console do not, since an app with neither is
+  not a debugger. A closed pane leaves the layout entirely (which is also how a
+  narrow window buys width), so the menu is the **required** way back — the one
+  obligation a hideable pane has. The closed set persists to `localStorage` as
+  the *closed* list, not the open one, so a pane added in a later version shows
+  up for existing users instead of staying invisible. Pure-UI state, so it stays
+  client-side like the theme and the watch list: **still no settings message on
+  the wire** (cf. Phase 3 B5).
+- **[OPEN] Still to do in 3b:** layout *settings* (a saved/nameable arrangement,
+  and whether the 80-column floor should be configurable — today it is a
+  constant), and the user theme deferred from B5.
+
 **Phase 4 — Differentiators / stretch.** `sys.monitoring` fast breakpoints;
 `ipywidgets`/`%matplotlib widget` via a Comm channel (needs kernel-comm work);
 the data-flow / call-graph pane hinted at in the requirements; remote &

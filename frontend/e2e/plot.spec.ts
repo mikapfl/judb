@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 
@@ -279,6 +279,11 @@ test("interactive matplotlib: render an in-frame plot, then zoom it", async ({ p
   const { proc, url } = await startDebuggee();
 
   try {
+    // A matplotlib figure is ~640 px wide and the drag below aims at absolute
+    // coordinates inside it, so give the console room next to an 80-column
+    // source rather than letting the responsive rules decide (at the default
+    // 1280×720 the console is narrower than the figure and the drag misses).
+    await page.setViewportSize({ width: 1700, height: 1000 });
     await page.goto(url);
     await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
 
@@ -554,6 +559,206 @@ test("refreshing the page while paused restores the UI", async ({ page }) => {
     await page.keyboard.type("len(data)");
     await page.getByRole("button", { name: "Run cell" }).first().click();
     await expect(page.locator(".cells")).toContainText("50", { timeout: 15_000 });
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
+
+// --- responsive layout ---------------------------------------------------
+
+/** The pane box with this header title (the header is the only place it appears). */
+const paneBox = (page: Page, title: string) =>
+  page.locator(`.panebox:has(h2 .title:text-is("${title}"))`);
+
+/** How many columns of code the source editor currently fits, measured in the
+ *  editor's own font — the number the 80-column floor is about. */
+async function sourceColumns(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const content = document.querySelector(".source .cm-content");
+    if (!content) return 0;
+    const style = getComputedStyle(content);
+    const ctx = document.createElement("canvas").getContext("2d")!;
+    ctx.font = `${style.fontSize} ${style.fontFamily}`;
+    const charPx = ctx.measureText("0".repeat(80)).width / 80;
+    return Math.floor(content.getBoundingClientRect().width / charPx);
+  });
+}
+
+/** Distinct rows the secondary panes are laid out in, top to bottom. */
+async function secondaryRowCount(page: Page): Promise<number> {
+  const boxes = await page.locator(".panebox").evaluateAll((els) =>
+    els
+      .filter((el) => !el.querySelector(".source, .notebook"))
+      .map((el) => Math.round(el.getBoundingClientRect().y)),
+  );
+  return new Set(boxes).size;
+}
+
+test("the source keeps 80 columns — the console folds under it when it can't", async ({
+  page,
+}) => {
+  const { proc, url } = await startDebuggee();
+
+  try {
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+
+    // Roomy: console beside the source (same top, further right), and the
+    // source still has well over PEP 8's 80 columns.
+    const wideSource = (await paneBox(page, "Source").boundingBox())!;
+    const wideConsole = (await paneBox(page, "Notebook console — runs in the paused frame")
+      .boundingBox())!;
+    expect(wideConsole.x).toBeGreaterThan(wideSource.x + wideSource.width - 1);
+    expect(Math.abs(wideConsole.y - wideSource.y)).toBeLessThan(2);
+    expect(await sourceColumns(page)).toBeGreaterThanOrEqual(80);
+
+    // Squeezed but still wide enough for both: the split shifts in the source's
+    // favour rather than letting it drop below the floor.
+    await page.setViewportSize({ width: 1100, height: 900 });
+    await expect(async () => {
+      expect(await sourceColumns(page)).toBeGreaterThanOrEqual(80);
+    }).toPass({ timeout: 5_000 });
+    const midConsole = (await paneBox(page, "Notebook console — runs in the paused frame")
+      .boundingBox())!;
+    expect(midConsole.x).toBeGreaterThan(0); // still side by side
+
+    // Too narrow for both: the console folds *under* the source, which then
+    // gets the whole width back.
+    await page.setViewportSize({ width: 780, height: 900 });
+    await expect(async () => {
+      const source = (await paneBox(page, "Source").boundingBox())!;
+      const console_ = (await paneBox(
+        page,
+        "Notebook console — runs in the paused frame",
+      ).boundingBox())!;
+      expect(console_.y).toBeGreaterThan(source.y + source.height - 1);
+      expect(console_.x).toBeLessThan(2);
+      expect(source.width).toBeGreaterThan(700);
+    }).toPass({ timeout: 5_000 });
+    expect(await sourceColumns(page)).toBeGreaterThanOrEqual(80);
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
+
+/** Drag the source/console splitter to an absolute x. */
+async function dragSplitterTo(page: Page, x: number): Promise<void> {
+  const splitter = page
+    .locator("main > .splitpanes > .splitpanes__pane")
+    .first()
+    .locator("> .splitpanes > .splitpanes__splitter");
+  const grip = (await splitter.boundingBox())!;
+  const y = grip.y + grip.height / 2;
+  await page.mouse.move(grip.x + grip.width / 2, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y, { steps: 10 });
+  await page.mouse.up();
+}
+
+test("a source narrower than 80 columns is the user's call, and it sticks", async ({
+  page,
+}) => {
+  const { proc, url } = await startDebuggee();
+
+  try {
+    await page.setViewportSize({ width: 1500, height: 900 });
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+
+    // Haul the splitter left, well past the floor: the user wants a sliver of
+    // source and a wide console, and gets it.
+    await dragSplitterTo(page, 20);
+    const slim = await sourceColumns(page);
+    expect(slim).toBeLessThan(40);
+
+    // The window moving under them does not overrule that — neither wider…
+    await page.setViewportSize({ width: 1700, height: 900 });
+    await page.waitForTimeout(300);
+    expect(await sourceColumns(page)).toBeLessThan(60);
+    // …nor narrower.
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.waitForTimeout(300);
+    expect(await sourceColumns(page)).toBeLessThan(40);
+
+    // Dragging back to a comfortable width re-arms the automatic floor: from
+    // here on the window is once again held to 80 columns.
+    await page.setViewportSize({ width: 1500, height: 900 });
+    await page.waitForTimeout(300);
+    await dragSplitterTo(page, 825);
+    expect(await sourceColumns(page)).toBeGreaterThanOrEqual(80);
+
+    await page.setViewportSize({ width: 1100, height: 900 });
+    await expect(async () => {
+      expect(await sourceColumns(page)).toBeGreaterThanOrEqual(80);
+    }).toPass({ timeout: 5_000 });
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
+
+test("the secondary panes reflow into two rows, then three, as the window narrows", async ({
+  page,
+}) => {
+  const { proc, url } = await startDebuggee();
+
+  try {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+
+    await expect(async () => expect(await secondaryRowCount(page)).toBe(1)).toPass({
+      timeout: 5_000,
+    });
+
+    await page.setViewportSize({ width: 1000, height: 900 });
+    await expect(async () => expect(await secondaryRowCount(page)).toBe(2)).toPass({
+      timeout: 5_000,
+    });
+
+    await page.setViewportSize({ width: 620, height: 900 });
+    await expect(async () => expect(await secondaryRowCount(page)).toBe(3)).toPass({
+      timeout: 5_000,
+    });
+
+    // Nothing has been pushed off the side: a horizontally scrolling body would
+    // slide the whole grid out from under the pointer.
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(0);
+  } finally {
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+  }
+});
+
+test("a closed pane stays closed across a reload and comes back from the menu", async ({
+  page,
+}) => {
+  const { proc, url } = await startDebuggee();
+
+  try {
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+    await expect(paneBox(page, "Exception")).toBeVisible();
+
+    // Close it from its own header…
+    await paneBox(page, "Exception").locator("h2 .close").click();
+    await expect(paneBox(page, "Exception")).toHaveCount(0);
+    // …and the toolbar says one pane is hidden on purpose.
+    await expect(page.locator(".panemenu .count")).toHaveText("1 hidden");
+
+    // It is a preference, so it survives a reload (localStorage, like the theme).
+    await page.reload();
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+    await expect(paneBox(page, "Exception")).toHaveCount(0);
+
+    // The menu is the way back.
+    await page.getByRole("button", { name: "Panes" }).click();
+    await page.getByRole("menu").getByText("Show all").click();
+    await expect(paneBox(page, "Exception")).toBeVisible();
+    await expect(page.locator(".panemenu .count")).toHaveCount(0);
   } finally {
     if (proc.exitCode === null) proc.kill("SIGKILL");
   }

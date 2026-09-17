@@ -150,9 +150,18 @@ Things that don't show up in the demo scripts but bite real users.
 
 ### A4. Docs & release
 
-- **README quickstart is already good** — add: an animated demo GIF (the headline
-  "plot a paused DataFrame" loop), a one-line pytest example, and a short "how it
-  works / why not just pdb" paragraph pointing at `REQUIREMENT_ANALYSIS.md`.
+- **README quickstart is already good** — the one-line pytest example is in
+  (*Debugging a failing test*); a short "how it works / why not just pdb"
+  paragraph pointing at `REQUIREMENT_ANALYSIS.md` is still missing.
+  - **[RESOLVED] the animated demo GIF is dropped, not deferred.** The
+    `<picture>` pair at the top of the README (`docs/images/screenshot_light.png`
+    / `screenshot_dark.png`, switched on `prefers-color-scheme`) already shows
+    the whole four-pane app with a rich output in it, in the reader's own
+    theme — and it is genuinely good. A GIF would trade that for something
+    heavier, uncontrollable in playback, unreadable at README width, illegible
+    to screen readers, and stale the moment a pane moves. Screenshots stay the
+    README's headline image; if a motion demo is ever wanted, it belongs
+    somewhere it can be paused and scrubbed (a linked video), not inlined.
 - **CHANGELOG + version. ✅ Done.** Changelog managed with **towncrier**:
   fragments in `changelog.d/`, collated by `make changelog` at release time, so
   branches in flight never conflict over `CHANGELOG.md`; CI runs
@@ -173,8 +182,9 @@ Things that don't show up in the demo scripts but bite real users.
 **Wave A exit: ✅ reached.** A stranger runs `pip install judb`, then either
 `python -m judb their_script.py` or `pytest --pdbcls=judb:Debugger` (or adds
 `judb.set_trace()`), and lands in the browser UI — with no checkout, no Node, no
-`make frontend`. (Remaining polish — the README demo GIF — is nice-to-have, not a
-gate.)
+`make frontend`. (The one piece of polish still listed against A4 — the demo GIF
+— has since been **dropped**: the light/dark screenshot pair does the job
+better. See A4.)
 
 ---
 
