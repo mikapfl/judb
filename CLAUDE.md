@@ -12,7 +12,10 @@ notebook — something neither pdb/pudb nor a papermill-wrapped notebook does we
 
 Read `docs/REQUIREMENT_ANALYSIS.md` (motivation) and `docs/IMPLEMENTATION_PLAN.md`
 (architecture, design decisions, phased roadmap) before making non-trivial
-changes. The plan is the source of truth for *why* things are shaped the way they
+changes. `docs/ARCHITECTURE.md` is the map that goes with them: a C4 tour
+(context → containers → components → interfaces) with pointers to the actual
+symbols, the message catalogue, and the invariants each seam protects — start
+there when you need to find where something lives. The plan is the source of truth for *why* things are shaped the way they
 are; its §5 defines the phases and each phase's exit criterion.
 
 **Current status: Phase 3 Wave A shipped — `judb` is on PyPI, released through
