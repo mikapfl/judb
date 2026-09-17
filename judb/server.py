@@ -34,6 +34,8 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import WSMsgType, web
 
+from . import cells
+
 if TYPE_CHECKING:
     from .debugger import Debugger
 
@@ -43,6 +45,18 @@ _STATIC = Path(__file__).parent / "static"
 # one-shot results (cell output, completions, expansions). The most recent
 # one is replayed to a reconnecting browser so a refresh restores the UI.
 _STATE_TYPES = frozenset({"paused", "running", "finished"})
+
+# Commands the *server thread* answers itself, because they only touch the disk
+# and must not wait for the debuggee to pause again (see `DebugServer._store`).
+_STORAGE_COMMANDS = frozenset({"save_notebook", "save_cells"})
+
+
+def _cells_from_wire(data: object) -> list[cells.Cell]:
+    """Decode a command's ``cells`` payload, dropping malformed entries."""
+    if not isinstance(data, list):
+        return []
+    decoded = (cells.Cell.from_wire(entry) for entry in data)
+    return [cell for cell in decoded if cell is not None]
 
 
 class DebugServer:
@@ -252,21 +266,88 @@ class DebugServer:
         if self._had_client and self._last_state is not None:
             await ws.send_json(self._last_state)
         self._had_client = True
+        # What the *last* session left behind, read straight off disk: the saved
+        # notebook (with the watch list) and both cell libraries. Pushed rather
+        # than requested — the browser cannot ask for something it does not yet
+        # know exists, and the debuggee thread is not involved either way.
+        await ws.send_json(
+            {"type": "notebook", **await asyncio.to_thread(cells.read_notebook)}
+        )
+        await ws.send_json(
+            {"type": "library", **await asyncio.to_thread(cells.read_library)}
+        )
         sender = asyncio.create_task(self._send_loop(ws))
         try:
             async for msg in ws:
                 if msg.type == WSMsgType.TEXT:
                     data = json.loads(msg.data)
+                    cmd = data.get("cmd")
                     # `interrupt` must bypass the queue: the debuggee thread is
                     # blocked inside the runaway cell and won't drain `inbound`
                     # until it finishes. Deliver it straight to that thread.
-                    if data.get("cmd") == "interrupt":
+                    if cmd == "interrupt":
                         self.dbg.interrupt()
+                    elif cmd in _STORAGE_COMMANDS:
+                        await self._store(data)
                     else:
+                        # The watch list is the browser's, but it must outlive
+                        # this process's random port, so persist it as it goes by
+                        # (see `_store`). The debugger still gets it unchanged.
+                        if cmd == "set_watches":
+                            await self._store(data)
                         self.dbg.inbound.put(data)
         finally:
             sender.cancel()
         return ws
+
+    async def _store(self, data: dict[str, Any]) -> None:
+        """Persist a storage command, off the queue and off the debuggee thread.
+
+        Saved cells touch only the disk — no frame, no shell, nothing executed —
+        while the debuggee thread drains commands *only while paused*. Routing a
+        save through it would lose the user's cells exactly when the program runs
+        off and dies without pausing again, which is when they most want them
+        back. `interrupt` set the precedent; see docs/PHASE3A_PLAN.md §8.
+
+        Parameters
+        ----------
+        data
+            The decoded command (``save_notebook``, ``save_cells``, or the
+            ``set_watches`` that is also forwarded to the debugger).
+        """
+        cmd = data.get("cmd")
+        if cmd == "set_watches":
+            exprs = data.get("exprs")
+            if isinstance(exprs, list):
+                await asyncio.to_thread(
+                    cells.write_watches, [e for e in exprs if isinstance(e, str)]
+                )
+            return
+
+        items = _cells_from_wire(data.get("cells"))
+        if cmd == "save_notebook":
+            active = data.get("active")
+            await asyncio.to_thread(
+                cells.write_notebook, items, active if isinstance(active, str) else ""
+            )
+            return
+
+        scope = data.get("scope")
+        if scope not in ("user", "project"):
+            await self._emit(
+                {"type": "error", "message": f"bad save_cells scope: {scope!r}"}
+            )
+            return
+        await asyncio.to_thread(cells.write_library, scope, items)
+        # Everything that can see this artifact should now see the new version.
+        await self._emit(
+            {"type": "library", **await asyncio.to_thread(cells.read_library)}
+        )
+
+    async def _emit(self, message: dict[str, Any]) -> None:
+        """Queue a message for the browser from inside the event loop."""
+        assert self._out_q is not None
+        await self._out_q.put(message)
 
     async def _send_loop(self, ws: web.WebSocketResponse) -> None:
         assert self._out_q is not None

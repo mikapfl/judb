@@ -113,6 +113,75 @@ def _read_toml(path: Path) -> dict[str, Any]:
         return {}
 
 
+def _find_pyproject(start: Path) -> Path | None:
+    """Return the nearest ``pyproject.toml`` at or above ``start``, if any.
+
+    The walk stops at the first one found: it *is* the project root, and a
+    checkout nested inside another project must not inherit the outer one.
+
+    Parameters
+    ----------
+    start
+        Directory to start the upward walk from (normally the cwd).
+
+    Returns
+    -------
+    The path of the nearest ``pyproject.toml``, or ``None`` when the walk
+    reaches the filesystem root without finding one.
+    """
+    for directory in (start, *start.parents):
+        candidate = directory / "pyproject.toml"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def project_root(*, cwd: Path | None = None) -> Path:
+    """Return the directory judb treats as "this project".
+
+    The same nearest-``pyproject.toml`` rule the ``[tool.judb]`` layer uses, so
+    a project's settings and its saved cells (docs/PHASE3A_PLAN.md §6) always
+    agree on what the project *is*. The result is cached for the same reason
+    `settings` is: a debuggee that changes directory mid-run must not make judb
+    answer differently later on.
+
+    Parameters
+    ----------
+    cwd
+        Directory the search starts from; defaults to the process's current
+        working directory. Passing it bypasses the cache (tests only).
+
+    Returns
+    -------
+    The directory of the nearest enclosing ``pyproject.toml``, or the starting
+    directory itself when there is none — a stray script is its own project.
+    """
+    global _cached_root
+    if cwd is None and _cached_root is not None:
+        return _cached_root
+    start = (Path.cwd() if cwd is None else cwd).resolve()
+    found = _find_pyproject(start)
+    root = found.parent if found is not None else start
+    if cwd is None:
+        _cached_root = root
+    return root
+
+
+def state_dir() -> Path:
+    """Return the directory judb keeps machine-local state in.
+
+    Returns
+    -------
+    ``$XDG_STATE_HOME/judb``, falling back to ``~/.local/state/judb``. This is
+    where the working notebook and the watch list are auto-saved: judb writes
+    here continuously, and deliberately never writes into the user's checkout
+    unless asked to (docs/PHASE3A_PLAN.md §6).
+    """
+    base = environ.get("XDG_STATE_HOME")
+    root = Path(base) if base else Path.home() / ".local" / "state"
+    return root / "judb"
+
+
 def _project_table(start: Path) -> dict[str, Any]:
     """Return the ``[tool.judb]`` table of the nearest enclosing project.
 
@@ -127,21 +196,19 @@ def _project_table(start: Path) -> dict[str, Any]:
     up from ``start``, or an empty mapping if there is none (or it has no such
     table). The walk stops at that first file: it *is* the project root.
     """
-    for directory in (start, *start.parents):
-        candidate = directory / "pyproject.toml"
-        if not candidate.is_file():
-            continue
-        tool = _read_toml(candidate).get("tool")
-        if not isinstance(tool, Mapping):
-            return {}
-        judb = tool.get("judb")
-        if judb is None:
-            return {}
-        if not isinstance(judb, Mapping):
-            _warn(f"ignoring {candidate}: [tool.judb] is not a table")
-            return {}
-        return _validated(judb, source=f"{candidate} [tool.judb]")
-    return {}
+    candidate = _find_pyproject(start)
+    if candidate is None:
+        return {}
+    tool = _read_toml(candidate).get("tool")
+    if not isinstance(tool, Mapping):
+        return {}
+    judb = tool.get("judb")
+    if judb is None:
+        return {}
+    if not isinstance(judb, Mapping):
+        _warn(f"ignoring {candidate}: [tool.judb] is not a table")
+        return {}
+    return _validated(judb, source=f"{candidate} [tool.judb]")
 
 
 def _validated(raw: Mapping[str, Any], *, source: str) -> dict[str, Any]:
@@ -195,6 +262,7 @@ def load_settings(*, cwd: Path | None = None) -> Settings:
 
 
 _cached: Settings | None = None
+_cached_root: Path | None = None
 
 
 def settings() -> Settings:
@@ -240,7 +308,8 @@ def reset() -> None:
     """Drop the cached settings so the next `settings` call re-reads the files.
 
     Only tests should need this — a process's configuration does not change
-    under it.
+    under it. The cached project root goes with it, for the same reason.
     """
-    global _cached
+    global _cached, _cached_root
     _cached = None
+    _cached_root = None

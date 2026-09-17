@@ -18,6 +18,9 @@
     onmoveUp,
     onmoveDown,
     onaddBelow,
+    onedit,
+    onpin,
+    pinLabel = "",
   }: {
     cell: Cell;
     first: boolean;
@@ -28,6 +31,11 @@
     onmoveUp: () => void;
     onmoveDown: () => void;
     onaddBelow: () => void;
+    /** Every keystroke, so a cell you never ran is still saved. */
+    onedit: (code: string) => void;
+    /** Pin this cell to the selected frame's location (absent: nowhere to pin). */
+    onpin?: () => void;
+    pinLabel?: string;
   } = $props();
 
   let host: HTMLDivElement;
@@ -68,6 +76,14 @@
         history(),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         cellExtensions(completions),
+        // The cell's text lives in CodeMirror, so the store only ever learned
+        // it when the cell was *run* — which is not good enough now that the
+        // notebook is saved to disk. Report every edit, and report focus, so
+        // the console never switches tabs under someone's hands.
+        EditorView.updateListener.of((update) => {
+          if (update.docChanged) onedit(update.state.doc.toString());
+          if (update.focusChanged) conn.editing = update.view.hasFocus;
+        }),
       ],
     });
     return () => view?.destroy();
@@ -76,10 +92,15 @@
   const label = $derived(cell.pending ? "[*]" : cell.count == null ? "[ ]" : `[${cell.count}]`);
 </script>
 
-<div class="cell" class:pending={cell.pending}>
+<div class="cell" class:pending={cell.pending} class:setup={cell.setup}>
   <div class="cell-body">
     <div class="gutter">
       <span class="count" title="execution order">{label}</span>
+      {#if cell.setup}
+        <span class="badge" title="From your own cell library; runs once a session"
+          >setup</span
+        >
+      {/if}
     </div>
     <div class="editor" bind:this={host}></div>
     <div class="tools">
@@ -97,6 +118,9 @@
         >↓</button
       >
       <button aria-label="Add cell below" title="Add cell below" onclick={onaddBelow}>＋</button>
+      {#if onpin}
+        <button class="pin" aria-label="Pin cell" title={pinLabel} onclick={onpin}>📌</button>
+      {/if}
       <button aria-label="Delete cell" title="Delete cell" onclick={ondelete}>🗑</button>
     </div>
   </div>
@@ -123,6 +147,10 @@
   .cell.pending {
     border-color: var(--warn-fg);
   }
+  /* A setup cell comes from the user's own library, not from this notebook. */
+  .cell.setup {
+    border-style: dashed;
+  }
   .cell-body {
     display: flex;
     align-items: flex-start;
@@ -141,6 +169,14 @@
     max-height: 14rem;
     overflow: auto;
     padding: 0.3rem 0.2rem;
+  }
+  .badge {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
   }
   .tools {
     flex: 0 0 auto;

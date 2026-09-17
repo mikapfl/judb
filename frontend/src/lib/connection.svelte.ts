@@ -8,9 +8,12 @@ import type {
   CompletionsMsg,
   ExceptionInfo,
   FrameView,
+  LibraryMsg,
   MimeBundle,
   MplMsg,
+  NotebookMsg,
   Output,
+  SavedCell,
   ServerMsg,
   StackFrame,
   VarChild,
@@ -34,6 +37,37 @@ export interface Cell {
   /** Run order shown as `[n]` (like a notebook's execution count); null if the
    *  cell has never been run. */
   count: number | null;
+  /** Optional label, carried into the saved file's `# %%` marker line. */
+  name?: string;
+  /** Materialised from the user's `setup`-tagged library cells: run once at the
+   *  start of a session and never written back (they come from the library, so
+   *  saving them here would duplicate them every run). */
+  setup?: boolean;
+}
+
+/** One console tab: the cells pinned to one location (`at`), or Scratch (`""`).
+ *  A tab exists only once it *has* cells, so stepping through code you have no
+ *  cells for never moves the console (docs/PHASE3A_PLAN.md §4). */
+export interface Tab {
+  at: string;
+  cells: Cell[];
+}
+
+/** Whether a cell keyed `at` belongs at `location`: no key matches everywhere,
+ *  a file key matches any function in that file, a function key only itself.
+ *  Mirrors judb/cells.py's `matches`. */
+export function matchesLocation(at: string, location: string): boolean {
+  if (!at) return true;
+  if (at === location) return true;
+  return !at.includes("::") && location.startsWith(`${at}::`);
+}
+
+/** The label a tab shows: the function (or file) its key names. */
+export function tabTitle(at: string): string {
+  if (!at) return "Scratch";
+  const [file, qualname] = at.split("::");
+  if (!qualname) return file.split("/").pop() ?? file;
+  return `${qualname.split(".").pop()}()`;
 }
 
 /** A file opened for browsing — one that no frame is in (see `openFile`). */
@@ -56,20 +90,10 @@ export interface ExpandState {
 const RETRY_MIN_MS = 250;
 const RETRY_MAX_MS = 5000;
 
-/** Where the watch list is persisted. The *browser* owns the list — the backend
- *  only holds whatever it was last told — so it survives a refresh, and a fresh
- *  run of the same debuggee comes up watching the same expressions. */
-const WATCHES_KEY = "judb-watches";
-
-function loadWatches(): string[] {
-  try {
-    const raw = localStorage.getItem(WATCHES_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : null;
-    return Array.isArray(parsed) ? parsed.filter((e) => typeof e === "string") : [];
-  } catch {
-    return []; // absent, malformed, or localStorage unavailable — start empty.
-  }
-}
+/** How long after the last edit the notebook is written to disk. Long enough
+ *  that typing does not chatter, short enough that a debuggee which runs off and
+ *  dies takes nothing with it. */
+const SAVE_DEBOUNCE_MS = 500;
 
 class Connection {
   status = $state<Status>("connecting");
@@ -80,10 +104,25 @@ class Connection {
   locals = $state<string[]>([]);
   stack = $state<StackFrame[]>([]);
   selected = $state(0);
-  // The notebook: an ordered list of editable cells, starting with one empty
-  // cell. Cells persist across steps (you build up a notebook and re-run cells
-  // as you step), so this is never cleared on pause.
-  cells = $state<Cell[]>([{ id: 0, code: "", outputs: [], pending: false, count: null }]);
+  // The notebook: one tab per location that has cells, plus Scratch at index 0.
+  // Cells persist across steps (you build up a notebook and re-run cells as you
+  // step), so this is never cleared on pause — and since Phase 3a it is saved to
+  // disk, so it outlives the debuggee process too.
+  tabs = $state<Tab[]>([
+    { at: "", cells: [{ id: 0, code: "", outputs: [], pending: false, count: null }] },
+  ]);
+  active = $state(0);
+  // The selected frame's location key, and a tab that matches it but which we
+  // did not switch to because an editor had focus (badged instead — judb never
+  // moves the console out from under someone's hands).
+  locationKey = $state("");
+  pendingTab = $state(-1);
+  // Whether a cell editor currently has focus (set by NotebookCell).
+  editing = $state(false);
+  // The two cell libraries, as last read from disk by the server.
+  library = $state<{ user: SavedCell[]; project: SavedCell[]; paths: { user: string; project: string } }>(
+    { user: [], project: [], paths: { user: "", project: "" } },
+  );
   // Breakpoints in the currently-shown file (with their cond/temporary/ignore
   // options). The source pane only ever edits the displayed frame's file, so a
   // flat list (refreshed on every frame change) is enough for the gutter.
@@ -117,7 +156,7 @@ class Connection {
   // backend, which re-evaluates them on every pause, frame change and cell run.
   // Values are index-aligned with `watches`, but lag it while a round-trip is
   // in flight, so a row matches its value on `expr` (see `watchValue`).
-  watches = $state<string[]>(loadWatches());
+  watches = $state<string[]>([]);
   watchValues = $state<WatchValue[]>([]);
 
   #ws: WebSocket | null = null;
@@ -131,6 +170,10 @@ class Connection {
   // count shown as `[n]`.
   #nextCellId = 1;
   #execCount = 0;
+  // Debounce timer for `save_notebook`.
+  #saveTimer: ReturnType<typeof setTimeout> | null = null;
+  // Setup cells still waiting for the first pause to run them.
+  #pendingSetup: number[] = [];
   // FIFO of cell ids awaiting a `cell_result`. Execution is serialized on the
   // debuggee thread, so results come back in send order — this correlates each
   // result to the cell that asked for it (any cell can be re-run, not just the
@@ -152,7 +195,12 @@ class Connection {
   /** A console cell is executing (a runaway cell keeps this true) — the window
    *  in which interrupting makes sense. */
   get busy(): boolean {
-    return this.cells.some((c) => c.pending);
+    return this.tabs.some((tab) => tab.cells.some((c) => c.pending));
+  }
+
+  /** Every cell in every tab, for the few things that span the notebook. */
+  get allCells(): Cell[] {
+    return this.tabs.flatMap((tab) => tab.cells);
   }
 
   // --- what the Source pane shows -------------------------------------
@@ -206,10 +254,11 @@ class Connection {
       // The server replays the current state to a reconnecting client, so the
       // panes refill on their own; just reset the backoff.
       this.#retryDelay = RETRY_MIN_MS;
-      // The watch list lives here, not on the backend, so hand it over: this
-      // covers a refresh, a reconnect, *and* a brand-new debuggee that has
-      // never heard of these expressions. Answered with a `watches` message
-      // (once the debuggee is paused), which refills the values.
+      // The watch list is still ours to own, but it is *stored* by the backend
+      // now (a random port per run means localStorage cannot outlive the
+      // debuggee). The server pushes `notebook` with the restored list; until
+      // then, hand over whatever we already have — that covers a reconnect
+      // mid-session, where ours is the newer list.
       if (this.watches.length > 0) this.#sendWatches();
     };
     ws.onclose = () => {
@@ -244,6 +293,16 @@ class Connection {
   // added / deleted / reordered. Structural edits (add/delete/move) are purely
   // client-side; only `runCell` talks to the backend.
 
+  /** The cells of the tab in front. Every pane works on "the notebook", which
+   *  is whichever tab that is; the tabs themselves are `this.tabs`. */
+  get cells(): Cell[] {
+    return (this.tabs[this.active] ?? this.tabs[0]).cells;
+  }
+
+  set cells(value: Cell[]) {
+    (this.tabs[this.active] ?? this.tabs[0]).cells = value;
+  }
+
   /** Insert a new empty cell after `afterId` (or at the end) and return its id. */
   addCell(afterId?: number): number {
     const cell: Cell = {
@@ -256,6 +315,7 @@ class Connection {
     const at = afterId == null ? -1 : this.cells.findIndex((c) => c.id === afterId);
     if (at < 0) this.cells.push(cell);
     else this.cells.splice(at + 1, 0, cell);
+    this.touch();
     return cell.id;
   }
 
@@ -265,6 +325,7 @@ class Connection {
     if (i < 0) return;
     this.cells.splice(i, 1);
     if (this.cells.length === 0) this.addCell();
+    this.touch();
   }
 
   /** Move a cell one slot up (dir -1) or down (dir +1). */
@@ -274,14 +335,92 @@ class Connection {
     if (i < 0 || j < 0 || j >= this.cells.length) return;
     const [cell] = this.cells.splice(i, 1);
     this.cells.splice(j, 0, cell);
+    this.touch();
+  }
+
+  /** Record a cell's current text (called as the editor changes, so a cell you
+   *  never ran is still there tomorrow) and schedule a save. */
+  editCell(id: number, code: string): void {
+    const cell = this.cells.find((c) => c.id === id);
+    if (!cell || cell.code === code) return;
+    cell.code = code;
+    this.touch();
+  }
+
+  // --- tabs -----------------------------------------------------------
+  //
+  // One tab per location key that has cells, Scratch (`at: ""`) always first.
+  // Landing somewhere with a tab brings it to the front; landing anywhere else
+  // changes nothing, so the console only follows the frame once the user has
+  // pinned something (docs/PHASE3A_PLAN.md §4).
+
+  /** Bring tab `index` to the front. */
+  selectTab(index: number): void {
+    if (index < 0 || index >= this.tabs.length || index === this.active) return;
+    this.active = index;
+    if (this.pendingTab === index) this.pendingTab = -1;
+    this.touch();
+  }
+
+  /** The tab for `at`, created (empty, with one blank cell) if there is none. */
+  tabFor(at: string): number {
+    const found = this.tabs.findIndex((t) => t.at === at);
+    if (found >= 0) return found;
+    this.tabs.push({ at, cells: [] });
+    return this.tabs.length - 1;
+  }
+
+  /** Pin one cell to `at`, moving it into that tab (and following it there).
+   *  This is the *only* way a cell acquires a location key. */
+  pinCell(id: number, at: string): void {
+    const from = this.active;
+    const i = this.cells.findIndex((c) => c.id === id);
+    if (i < 0 || this.tabs[from].at === at) return;
+    const [cell] = this.cells.splice(i, 1);
+    if (this.cells.length === 0 && from === 0) this.addCell();
+    const target = this.tabFor(at);
+    this.tabs[target].cells.push(cell);
+    this.#dropEmptyTabs();
+    this.active = this.tabs.findIndex((t) => t.at === at);
+    this.touch();
+  }
+
+  /** Pin the whole tab in front to `at` (Scratch keeps a fresh blank cell). */
+  pinTab(at: string): void {
+    const from = this.active;
+    if (this.tabs[from].at === at) return;
+    const moving = this.tabs[from].cells;
+    if (from === 0) this.tabs[0].cells = [];
+    const target = this.tabFor(at);
+    this.tabs[target].cells.push(...moving);
+    if (from !== 0) this.tabs.splice(from, 1);
+    else this.addCell();
+    this.#dropEmptyTabs();
+    this.active = this.tabs.findIndex((t) => t.at === at);
+    this.touch();
+  }
+
+  /** Discard a location tab and its cells. Scratch cannot be closed. */
+  closeTab(index: number): void {
+    if (index <= 0 || index >= this.tabs.length) return;
+    this.tabs.splice(index, 1);
+    if (this.active >= this.tabs.length) this.active = this.tabs.length - 1;
+    else if (this.active > index) this.active -= 1;
+    this.touch();
+  }
+
+  /** Drop location tabs that have gone empty (Scratch always stays). */
+  #dropEmptyTabs(): void {
+    this.tabs = this.tabs.filter((tab, i) => i === 0 || tab.cells.length > 0);
   }
 
   /** Run a cell's current code against the paused frame. Records the code, marks
    *  the cell pending, and correlates the eventual result back to *this* cell. */
   runCell(id: number, code: string): void {
-    const cell = this.cells.find((c) => c.id === id);
+    const cell = this.#findCell(id);
     if (!cell) return;
     cell.code = code; // persist the latest edit even if we can't run it
+    this.touch();
     if (!this.paused || !code.trim()) return;
     cell.pending = true;
     cell.outputs = [];
@@ -458,12 +597,184 @@ class Connection {
   }
 
   #syncWatches(): void {
-    try {
-      localStorage.setItem(WATCHES_KEY, JSON.stringify(this.watches));
-    } catch {
-      // best-effort persistence (private mode / sandboxed iframe)
-    }
+    // Persistence rides along: the server writes the list it is told next to
+    // the saved notebook, which (unlike localStorage, scoped to a port that
+    // changes every run) is still there for the next run of the program.
     this.#sendWatches();
+  }
+
+  // --- persistence ----------------------------------------------------
+  //
+  // The browser owns the notebook; the backend owns its durability. Saving is
+  // debounced and handled by the *server* thread, so a debuggee that runs off
+  // and dies without pausing again takes nothing with it
+  // (docs/PHASE3A_PLAN.md §1, §8).
+
+  /** Note that the notebook changed; the write itself is debounced. */
+  touch(): void {
+    if (this.#saveTimer !== null) clearTimeout(this.#saveTimer);
+    this.#saveTimer = setTimeout(() => {
+      this.#saveTimer = null;
+      this.send({
+        cmd: "save_notebook",
+        cells: this.#flatten(),
+        active: this.tabs[this.active]?.at ?? "",
+      });
+    }, SAVE_DEBOUNCE_MS);
+  }
+
+  /** The notebook as the file sees it: flat, each cell carrying its tab's key.
+   *  Setup cells are left out — they are materialised from the library on every
+   *  connect, so saving them here would duplicate them run after run. */
+  #flatten(): SavedCell[] {
+    return this.tabs.flatMap((tab) =>
+      tab.cells
+        .filter((cell) => !cell.setup && cell.code.trim())
+        .map((cell) => ({ code: cell.code, name: cell.name ?? "", at: tab.at, tags: [] })),
+    );
+  }
+
+  #findCell(id: number): Cell | undefined {
+    for (const tab of this.tabs) {
+      const cell = tab.cells.find((c) => c.id === id);
+      if (cell) return cell;
+    }
+    return undefined;
+  }
+
+  #newCell(code = "", name = "", setup = false): Cell {
+    return { id: this.#nextCellId++, code, outputs: [], pending: false, count: null, name, setup };
+  }
+
+  /** Nothing typed yet: one empty Scratch cell and no other tab. */
+  get #untouched(): boolean {
+    return (
+      this.tabs.length === 1 &&
+      this.tabs[0].cells.length === 1 &&
+      !this.tabs[0].cells[0].code.trim()
+    );
+  }
+
+  /** Take up the notebook the last run left behind.
+   *
+   *  Guarded by what actually matters rather than by "have we done this
+   *  already": nothing on screen is ever overwritten, so a *re*connect (where
+   *  the live notebook is the newer one) simply finds nothing to do. */
+  #adoptNotebook(msg: NotebookMsg): void {
+    if (this.watches.length === 0 && msg.watches.length > 0) {
+      this.watches = [...msg.watches];
+      this.#sendWatches(); // the debugger holds only what it was last told
+    }
+    if (!this.#untouched || msg.cells.length === 0) return;
+
+    const tabs: Tab[] = [{ at: "", cells: [] }];
+    for (const saved of msg.cells) {
+      const at = saved.at ?? "";
+      let tab = tabs.find((t) => t.at === at);
+      if (!tab) tabs.push((tab = { at, cells: [] }));
+      tab.cells.push(this.#newCell(saved.code, saved.name));
+    }
+    if (tabs[0].cells.length === 0) tabs[0].cells.push(this.#newCell());
+    this.tabs = tabs;
+    const wanted = tabs.findIndex((t) => t.at === msg.active);
+    this.active = wanted >= 0 ? wanted : 0;
+  }
+
+  /** Follow the selected frame, if a tab is pinned there. */
+  #noteLocation(location: string): void {
+    this.locationKey = location;
+    const match = location ? this.tabs.findIndex((t) => t.at === location) : -1;
+    if (match < 0 || match === this.active) {
+      this.pendingTab = -1;
+      return;
+    }
+    // Never move the console out from under someone's hands: badge the tab and
+    // let them (or the next pause) make the switch.
+    if (this.editing) {
+      this.pendingTab = match;
+      return;
+    }
+    this.active = match;
+    this.pendingTab = -1;
+  }
+
+  // --- the cell libraries ---------------------------------------------
+
+  /** Replace one library file; the server echoes the new `library` back. */
+  #saveLibrary(scope: "user" | "project", cells: SavedCell[]): void {
+    this.send({ cmd: "save_cells", scope, cells });
+  }
+
+  /** Save the tab in front into a library, as the cells for its location.
+   *
+   *  A *replace* of that location's entries rather than an append, so pressing
+   *  it twice does not double them: what is on screen is what that location's
+   *  cells are. */
+  saveTabTo(scope: "user" | "project"): void {
+    const tab = this.tabs[this.active];
+    if (!tab) return;
+    const mine = tab.cells
+      .filter((cell) => !cell.setup && cell.code.trim())
+      .map((cell) => ({ code: cell.code, name: cell.name ?? "", at: tab.at, tags: [] }));
+    if (mine.length === 0) return;
+    this.#saveLibrary(scope, [
+      ...this.library[scope].filter((cell) => cell.at !== tab.at),
+      ...mine,
+    ]);
+  }
+
+  /** Drop a cell from a library. */
+  removeFromLibrary(scope: "user" | "project", index: number): void {
+    this.#saveLibrary(
+      scope,
+      this.library[scope].filter((_, i) => i !== index),
+    );
+  }
+
+  /** Re-key a library cell to where we are now — the manual answer to a rename
+   *  (judb never guesses which function your cells moved to). */
+  rekeyLibraryCell(scope: "user" | "project", index: number): void {
+    this.#saveLibrary(
+      scope,
+      this.library[scope].map((cell, i) => (i === index ? { ...cell, at: this.locationKey } : cell)),
+    );
+  }
+
+  /** Put a library cell into the notebook (at the end of the tab in front). */
+  insertFromLibrary(cell: SavedCell): number {
+    const added = this.#newCell(cell.code, cell.name);
+    this.cells.push(added);
+    this.touch();
+    return added.id;
+  }
+
+  /** The library cells that belong where we are now, richest key first. */
+  matchingHere(scope: "user" | "project"): { cell: SavedCell; index: number }[] {
+    return this.library[scope]
+      .map((cell, index) => ({ cell, index }))
+      .filter(({ cell }) => matchesLocation(cell.at, this.locationKey));
+  }
+
+  /** Materialise the user's `setup` cells into Scratch and run them once. */
+  #materialiseSetup(): void {
+    const setup = this.library.user.filter((cell) => cell.tags?.includes("setup"));
+    const already = this.tabs[0].cells.some((cell) => cell.setup);
+    if (setup.length === 0 || already) return;
+    const made = setup.map((cell) => this.#newCell(cell.code, cell.name, true));
+    this.tabs[0].cells.unshift(...made);
+    this.#pendingSetup = made.map((cell) => cell.id);
+    this.#runPendingSetup();
+  }
+
+  /** Run the materialised setup cells, once the debuggee is actually paused. */
+  #runPendingSetup(): void {
+    if (!this.paused || this.#pendingSetup.length === 0) return;
+    const ids = this.#pendingSetup;
+    this.#pendingSetup = [];
+    for (const id of ids) {
+      const cell = this.#findCell(id);
+      if (cell) this.runCell(id, cell.code);
+    }
   }
 
   // --- tab completion -------------------------------------------------
@@ -498,6 +809,8 @@ class Connection {
         this.exception = msg.exception ?? null;
         this.postmortem = msg.postmortem ?? false;
         this.#showFrame(msg);
+        // Setup cells wait for a frame to run in; this is the first one.
+        this.#runPendingSetup();
         break;
       case "frame_selected":
         this.selected = msg.index;
@@ -516,7 +829,7 @@ class Connection {
         this.#flushCompletions();
         // Nothing will complete a still-spinning cell now; release them.
         this.#pendingExec = [];
-        for (const cell of this.cells) cell.pending = false;
+        for (const cell of this.allCells) cell.pending = false;
         break;
       case "cell_result":
         this.#attachResult(msg.outputs ?? []);
@@ -552,6 +865,13 @@ class Connection {
       }
       case "watches":
         this.watchValues = msg.watches;
+        break;
+      case "notebook":
+        this.#adoptNotebook(msg);
+        break;
+      case "library":
+        this.library = { user: msg.user, project: msg.project, paths: msg.paths };
+        this.#materialiseSetup();
         break;
       case "completions":
         this.#pendingCompletions.shift()?.(msg);
@@ -599,6 +919,7 @@ class Connection {
     this.source = view.source ?? "";
     this.locals = view.locals ?? [];
     this.breakpoints = view.breakpoints ?? [];
+    this.#noteLocation(view.location ?? "");
   }
 
   // Attach a result to the cell that requested it (FIFO — see `#pendingExec`).
@@ -606,7 +927,7 @@ class Connection {
   // the last cell so it isn't silently dropped.
   #attachResult(outputs: Output[]): void {
     const id = this.#pendingExec.shift() ?? this.cells.at(-1)?.id;
-    const cell = id == null ? undefined : this.cells.find((c) => c.id === id);
+    const cell = id == null ? undefined : this.#findCell(id);
     if (cell) {
       cell.outputs = outputs;
       cell.pending = false;

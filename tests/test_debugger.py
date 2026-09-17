@@ -873,3 +873,43 @@ def test_reassert_sigint_handler_is_noop_off_main_thread(
 
     assert calls == []
     assert errors == []
+
+
+def test_frame_views_carry_a_location_key():
+    """Both `paused` and `frame_selected` say where saved cells would pin.
+
+    The key is what the console's tabs match on (docs/PHASE3A_PLAN.md §3), so it
+    has to follow the *selected* frame, not just the innermost one.
+    """
+    dbg = Debugger()
+    url = dbg.start_server(open_browser=False)
+
+    def inner() -> None:
+        dbg.set_trace()
+        _ = 1
+
+    def outer() -> None:
+        inner()
+
+    thread = threading.Thread(target=outer)
+    thread.start()
+
+    async def flow() -> None:
+        async with ClientSession() as session, session.ws_connect(ws_url(url)) as ws:
+            paused = await recv_type(ws, "paused")
+            assert paused["location"].endswith(
+                "test_debugger.py::test_frame_views_carry_a_location_key.<locals>.inner"
+            )
+            outer_idx = next(
+                i for i, f in enumerate(paused["stack"]) if f["function"] == "outer"
+            )
+            await ws.send_json({"cmd": "select_frame", "index": outer_idx})
+            selected = await recv_type(ws, "frame_selected")
+            assert selected["location"].endswith(".<locals>.outer")
+
+            await ws.send_json({"cmd": "continue"})
+            await recv_type(ws, "running")
+
+    asyncio.run(flow())
+    thread.join(timeout=5)
+    assert not thread.is_alive()

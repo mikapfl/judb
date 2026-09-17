@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { conn, type Cell } from "./connection.svelte";
+import type { SavedCell } from "../protocol";
 
 const blank = (id: number): Cell => ({
   id,
@@ -251,7 +252,7 @@ describe("watch expressions", () => {
       )
       .map((m) => m.exprs);
 
-  it("sends the whole list on every edit and persists it", () => {
+  it("sends the whole list on every edit", () => {
     conn.addWatch("df.shape");
     conn.addWatch("  total  "); // trimmed
     conn.addWatch("df.shape"); // duplicate: ignored
@@ -268,10 +269,22 @@ describe("watch expressions", () => {
       ["df.shape", "total * 2"],
       ["total * 2"],
     ]);
-    // Persisted, so a refresh (and the next run of the same debuggee) keeps it.
-    expect(JSON.parse(localStorage.getItem("judb-watches") ?? "[]")).toEqual([
-      "total * 2",
-    ]);
+    // Persistence is the backend's job now: localStorage is scoped to the
+    // server's port, which is random and therefore different on the next run.
+    expect(localStorage.getItem("judb-watches")).toBeNull();
+  });
+
+  it("adopts the watch list the last run left behind", () => {
+    deliver({ type: "notebook", cells: [], active: "", watches: ["df.shape"] });
+    expect(conn.watches).toEqual(["df.shape"]);
+    // The debugger holds only what it was last told, so hand it straight over.
+    expect(sentLists().at(-1)).toEqual(["df.shape"]);
+  });
+
+  it("does not let a stored list overwrite one already on screen", () => {
+    conn.addWatch("mine");
+    deliver({ type: "notebook", cells: [], active: "", watches: ["theirs"] });
+    expect(conn.watches).toEqual(["mine"]);
   });
 
   it("drops a row edited to blank or to a duplicate of another", () => {
@@ -430,5 +443,125 @@ describe("source navigation", () => {
       all_breakpoints: [{ filename: "/proj/lib.py", line: 4 }],
     });
     expect(conn.knownFiles).toEqual(["/proj/frame.py", "/proj/lib.py", "/proj/main.py"]);
+  });
+});
+
+describe("the saved notebook", () => {
+  beforeEach(() => {
+    FakeWS.instances = [];
+    vi.stubGlobal("WebSocket", FakeWS);
+    vi.useFakeTimers();
+    conn.tabs = [{ at: "", cells: [blank(-1)] }];
+    conn.active = 0;
+    conn.watches = [];
+    conn.connect();
+    FakeWS.instances[0].onopen?.();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    conn.tabs = [{ at: "", cells: [blank(-1)] }];
+    conn.active = 0;
+  });
+
+  const deliver = (msg: unknown) =>
+    FakeWS.instances[0].onmessage?.({ data: JSON.stringify(msg) });
+
+  const saves = () =>
+    FakeWS.instances
+      .flatMap((ws) => ws.sent)
+      .filter((m): m is { cmd: string; cells: SavedCell[]; active: string } =>
+        (m as { cmd?: string }).cmd === "save_notebook",
+      );
+
+  const restore = (cells: SavedCell[], active = "") =>
+    deliver({ type: "notebook", cells, active, watches: [] });
+
+  const paused = () => ({
+    type: "paused",
+    filename: "demo.py",
+    lineno: 3,
+    function: "clean",
+    locals: [],
+    source: "",
+    breakpoints: [],
+    stack: [{ filename: "demo.py", lineno: 3, function: "clean" }],
+    selected: 0,
+    all_breakpoints: [],
+  });
+
+  it("groups the restored cells into one tab per location key", () => {
+    restore(
+      [
+        { code: "scale * 2", name: "", at: "", tags: [] },
+        { code: "df.plot()", name: "the plot", at: "demo.py::clean", tags: [] },
+        { code: "df.head()", name: "", at: "demo.py::clean", tags: [] },
+      ],
+      "demo.py::clean",
+    );
+    expect(conn.tabs.map((t) => t.at)).toEqual(["", "demo.py::clean"]);
+    expect(conn.tabs[1].cells.map((c) => c.code)).toEqual(["df.plot()", "df.head()"]);
+    // The tab that was in front last time is in front again.
+    expect(conn.active).toBe(1);
+    expect(conn.cells[0].name).toBe("the plot");
+  });
+
+  it("never overwrites cells that are already on screen", () => {
+    conn.cells[0].code = "live work";
+    restore([{ code: "from disk", name: "", at: "", tags: [] }]);
+    expect(conn.cells.map((c) => c.code)).toEqual(["live work"]);
+  });
+
+  it("debounces the save and sends the whole notebook, flat", () => {
+    conn.cells[0].code = "df.head()";
+    conn.touch();
+    conn.touch();
+    expect(saves()).toEqual([]); // nothing yet — still within the debounce
+    vi.runAllTimers();
+    expect(saves()).toEqual([
+      { cmd: "save_notebook", cells: [{ code: "df.head()", name: "", at: "", tags: [] }], active: "" },
+    ]);
+  });
+
+  it("follows the frame into a pinned tab, but not out of a focused editor", () => {
+    conn.cells[0].code = "df.plot()";
+    conn.pinCell(conn.cells[0].id, "demo.py::clean");
+    expect(conn.tabs.map((t) => t.at)).toEqual(["", "demo.py::clean"]);
+    expect(conn.active).toBe(1);
+
+    conn.selectTab(0);
+    deliver({ ...paused(), location: "demo.py::clean" });
+    expect(conn.active).toBe(1); // the frame brought its tab to the front
+
+    // …unless the user is typing: badge it and leave the console alone.
+    conn.selectTab(0);
+    conn.editing = true;
+    deliver({ ...paused(), location: "demo.py::clean" });
+    expect(conn.active).toBe(0);
+    expect(conn.pendingTab).toBe(1);
+    conn.editing = false;
+  });
+
+  it("stays put when the frame has no tab of its own", () => {
+    conn.cells[0].code = "df.plot()";
+    conn.pinCell(conn.cells[0].id, "demo.py::clean");
+    deliver({ ...paused(), location: "demo.py::somewhere_else" });
+    expect(conn.active).toBe(1);
+    expect(conn.pendingTab).toBe(-1);
+  });
+
+  it("keeps setup cells out of the saved notebook", () => {
+    deliver({
+      type: "library",
+      user: [{ code: "import numpy as np", name: "imports", at: "", tags: ["setup"] }],
+      project: [],
+      paths: { user: "/u/cells.py", project: "/p/.judb/cells.py" },
+    });
+    expect(conn.cells[0].setup).toBe(true);
+    conn.cells[1].code = "mine";
+    conn.touch();
+    vi.runAllTimers();
+    expect(saves().at(-1)?.cells).toEqual([{ code: "mine", name: "", at: "", tags: [] }]);
   });
 });
