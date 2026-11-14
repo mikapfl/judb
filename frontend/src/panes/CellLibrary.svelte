@@ -3,14 +3,12 @@
   // ones (docs/PHASE3A_PLAN.md §6). A popover rather than a pane — the layout
   // already reflows five secondary panes into up to three rows, and a sixth
   // would make that worse for something you reach for a few times a session.
-  import { conn, tabTitle } from "../lib/connection.svelte";
-  import { matchesLocation } from "../lib/connection.svelte";
-  import type { SavedCell } from "../protocol";
+  import { conn, matchesLocation, tabTitle } from "../lib/connection.svelte";
+  import type { LibraryScope, SavedCell } from "../protocol";
 
   let { onclose }: { onclose: () => void } = $props();
 
-  type Scope = "user" | "project";
-  const scopes: { id: Scope; label: string; note: string }[] = [
+  const scopes: { id: LibraryScope; label: string; note: string }[] = [
     { id: "project", label: "Project", note: "committed — anyone debugging here gets these" },
     { id: "user", label: "Yours", note: "every project; setup-tagged cells run once a session" },
   ];
@@ -19,7 +17,7 @@
 
   /** Cells that belong where we are now come first; the rest stay reachable,
    *  which is what makes a renamed function's orphaned cells findable. */
-  function ordered(scope: Scope): { cell: SavedCell; index: number }[] {
+  function ordered(scope: LibraryScope): { cell: SavedCell; index: number }[] {
     const rows = conn.library[scope].map((cell, index) => ({ cell, index }));
     return [...rows.filter((r) => here(r.cell)), ...rows.filter((r) => !here(r.cell))];
   }
@@ -56,13 +54,13 @@
                 {#if conn.locationKey && !here(row.cell)}
                   <button
                     title="This cell's function was renamed or moved? Point it here."
-                    onclick={() => conn.rekeyLibraryCell(scope.id, row.index)}>Re-key</button
+                    onclick={() => conn.rekeyLibraryCell(scope.id, row.cell)}>Re-key</button
                   >
                 {/if}
                 <button
                   class="remove"
                   aria-label="Remove from library"
-                  onclick={() => conn.removeFromLibrary(scope.id, row.index)}>🗑</button
+                  onclick={() => conn.removeFromLibrary(scope.id, row.cell)}>🗑</button
                 >
               </div>
             </li>
@@ -73,7 +71,10 @@
         <button onclick={() => conn.saveTabTo(scope.id)}>
           Save “{tabTitle(conn.tabs[conn.active]?.at ?? "")}” here
         </button>
-        <code title={conn.library.paths[scope.id]}>{conn.library.paths[scope.id]}</code>
+        <!-- Truncated from the left (`direction: rtl`), so the file name stays
+             visible; the mark keeps the leading "/" from being reordered to the
+             far end of the line, as a neutral character at the start would be. -->
+        <code title={conn.library.paths[scope.id]}>&lrm;{conn.library.paths[scope.id]}</code>
       </div>
     </section>
   {/each}

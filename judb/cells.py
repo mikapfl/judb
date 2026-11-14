@@ -5,7 +5,7 @@ Three tiers, one format (docs/PHASE3A_PLAN.md §2, §6)::
     ~/.config/judb/cells.py                   user library    (authored; may auto-run)
     <project root>/.judb/cells.py             project library (committed; never auto-runs)
     ~/.local/state/judb/notebooks/<slug>.py   the working notebook (auto-saved)
-    ~/.local/state/judb/notebooks/<slug>.toml watches + active tab
+    ~/.local/state/judb/notebooks/<slug>.json watches + active tab
 
 Everything is stored as **percent cells** — the ``# %%`` convention jupytext,
 VS Code, Spyder and PyCharm all speak:
@@ -22,9 +22,14 @@ The marker line is ``# %% <name> key=value…``: free text before the first
 ``key=`` is the cell's name, and the rest is metadata. That buys three things a
 JSON or TOML store would not: the committed tier diffs like the Python it is, the
 files open as cells in the user's own editor, and everything else that reads
-Python (linters, ``grep``, syntax highlighting) still works. Metadata keys judb
-does not know are **preserved verbatim**, so sharing a file with another tool
-never eats that tool's metadata.
+Python (linters, ``grep``, syntax highlighting) still works.
+
+The two **libraries** are files the user also edits by hand, so judb only ever
+*edits* them — `add_to_library`, `remove_from_library`, `rekey_in_library` each
+re-read the file as it is on disk and change just what was asked. Cells added in
+an editor while a session was open, a header comment, and metadata keys judb does
+not know all survive. The working notebook is different: it is judb's own state,
+and is rewritten whole on every save.
 
 A cell may carry a **location key** (``at=``) saying where it belongs, at any of
 three specificities::
@@ -34,7 +39,9 @@ three specificities::
     (absent)                        always
 
 Paths in a key are relative to the project root, because the committed tier is
-*for* other people's checkouts, where an absolute path means nothing.
+*for* other people's checkouts, where an absolute path means nothing. Deciding
+which cells belong at a paused frame is the browser's job (``matchesLocation``
+in ``connection.svelte.ts``); this module only produces the key (`location_of`).
 
 This module is pure file handling: no frame is touched (except to *read* a
 location off one), nothing is executed. That is what lets the server thread own
@@ -48,8 +55,9 @@ import json
 import os
 import re
 import sys
-import tomllib
-from dataclasses import dataclass
+import threading
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import FrameType
 from typing import Any, Final
@@ -84,7 +92,8 @@ class Cell:
         Notebook-style tags; only `SETUP_TAG` means anything to judb.
     extra
         Metadata keys judb does not know, as ``(key, raw value)`` pairs, kept so
-        a round-trip through judb never drops another tool's metadata.
+        editing a library never drops another tool's metadata. Not sent to the
+        browser: library edits happen here, against the file.
     """
 
     code: str
@@ -109,7 +118,7 @@ class Cell:
         Parameters
         ----------
         data
-            One entry of a ``save_notebook`` / ``save_cells`` payload.
+            One entry of a ``save_notebook`` or ``library_*`` payload.
 
         Returns
         -------
@@ -290,34 +299,49 @@ def _warn(message: str) -> None:
     print(f"judb: {message}", file=sys.stderr)
 
 
-def load(path: Path) -> list[Cell]:
-    """Read the cells in ``path``; a missing or unreadable file yields none.
+def _read(path: Path) -> str:
+    """Return the text of ``path``; a missing or unreadable file reads as empty.
 
-    Parameters
-    ----------
-    path
-        The percent-format file to read.
-
-    Returns
-    -------
-    The cells it holds, or an empty list. Losing saved cells is bad; refusing to
-    start the debugger over them would be worse, so every failure is a warning.
+    Losing saved cells is bad; refusing to start the debugger over them would be
+    worse, so every failure is a warning.
     """
     try:
-        return parse(path.read_text(encoding="utf-8"))
+        return path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return []
+        return ""
     except (OSError, UnicodeDecodeError) as exc:
         _warn(f"cannot read {path}: {exc}")
-        return []
+        return ""
+
+
+def load(path: Path) -> list[Cell]:
+    """Read the cells in ``path``; a missing or unreadable file yields none."""
+    return parse(_read(path))
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` through a temp file and :func:`os.replace`.
+
+    An interrupted write (or two racing) can then never leave a half-written
+    file where the user's cells used to be.
+
+    Raises
+    ------
+    OSError
+        If the file cannot be written. Callers decide who needs to hear: the
+        auto-save warns on stderr, an explicit library save tells the browser.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def save(path: Path, cells: list[Cell], *, header: str = "") -> None:
-    """Write ``cells`` to ``path`` atomically.
-
-    A temp file in the same directory plus :func:`os.replace`, so an interrupted
-    save (or two saves racing) can never leave a half-written notebook where the
-    user's cells used to be.
+    """Write ``cells`` to ``path`` atomically (see `_write_atomic`).
 
     Parameters
     ----------
@@ -327,14 +351,13 @@ def save(path: Path, cells: list[Cell], *, header: str = "") -> None:
         The cells to store.
     header
         Optional comment block for the top of the file.
+
+    Raises
+    ------
+    OSError
+        If the file cannot be written.
     """
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-        tmp.write_text(dumps(cells, header=header), encoding="utf-8")
-        os.replace(tmp, path)
-    except OSError as exc:
-        _warn(f"cannot write {path}: {exc}")
+    _write_atomic(path, dumps(cells, header=header))
 
 
 # --- where the files are ---------------------------------------------------
@@ -381,7 +404,7 @@ def notebook_path(root: Path | None = None) -> Path:
 
 def state_path(root: Path | None = None) -> Path:
     """Return the sidecar holding the watch list and active tab for a project."""
-    return notebook_path(root).with_suffix(".toml")
+    return notebook_path(root).with_suffix(".json")
 
 
 def notebook_header(root: Path) -> str:
@@ -398,23 +421,22 @@ def notebook_header(root: Path) -> str:
 
 
 def load_state(path: Path) -> dict[str, Any]:
-    """Read the TOML sidecar; a missing or broken file yields ``{}``."""
+    """Read the JSON sidecar; a missing or broken file yields ``{}``."""
     try:
-        with path.open("rb") as fp:
-            return tomllib.load(fp)
+        data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {}
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, ValueError) as exc:  # ValueError: not UTF-8, or not JSON
         _warn(f"cannot read {path}: {exc}")
         return {}
+    return data if isinstance(data, dict) else {}
 
 
 def save_state(path: Path, *, watches: list[str], active: str) -> None:
     """Write the watch list and active tab to ``path`` atomically.
 
-    Strings are emitted with :func:`json.dumps`, whose escaping is a subset of
-    TOML's basic strings — which matters, because a watch expression very often
-    contains quotes (``df["value"]``).
+    Plain JSON: nobody edits this file by hand, and a watch expression is
+    arbitrary text (quotes, non-ASCII), which JSON round-trips without thought.
 
     Parameters
     ----------
@@ -425,16 +447,9 @@ def save_state(path: Path, *, watches: list[str], active: str) -> None:
     active
         The location key of the tab that was in front.
     """
-    lines = [
-        "# judb — machine-local UI state (watches, active tab).",
-        f"active = {json.dumps(active)}",
-        "watches = [" + ", ".join(json.dumps(expr) for expr in watches) + "]",
-    ]
+    text = json.dumps({"active": active, "watches": watches}, ensure_ascii=False)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-        tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        os.replace(tmp, path)
+        _write_atomic(path, text + "\n")
     except OSError as exc:
         _warn(f"cannot write {path}: {exc}")
 
@@ -478,30 +493,6 @@ def location_of(frame: FrameType, root: Path | None = None) -> str:
         where = path.as_posix()
     qualname = frame.f_code.co_qualname
     return where if qualname == "<module>" else f"{where}::{qualname}"
-
-
-def matches(at: str, location: str) -> bool:
-    """Whether a cell keyed ``at`` belongs at ``location``.
-
-    The three rungs of one ladder: no key matches everywhere, a file key matches
-    any function in that file, and a function key matches only itself.
-
-    Parameters
-    ----------
-    at
-        The cell's location key (possibly empty).
-    location
-        The selected frame's key, from `location_of`.
-
-    Returns
-    -------
-    ``True`` if the cell should surface at that location.
-    """
-    if not at:
-        return True
-    if at == location:
-        return True
-    return "::" not in at and location.startswith(f"{at}::")
 
 
 # --- the three tiers, as the browser sees them -----------------------------
@@ -551,7 +542,11 @@ def write_notebook(items: list[Cell], active: str, root: Path | None = None) -> 
         The project root; defaults to `judb.config.project_root`.
     """
     root = config.project_root() if root is None else root
-    save(notebook_path(root), items, header=notebook_header(root))
+    path = notebook_path(root)
+    try:
+        save(path, items, header=notebook_header(root))
+    except OSError as exc:
+        _warn(f"cannot write {path}: {exc}")
     _update_state(root, active=active)
 
 
@@ -563,7 +558,7 @@ def write_watches(exprs: list[str], root: Path | None = None) -> None:
 def _update_state(
     root: Path, *, watches: list[str] | None = None, active: str | None = None
 ) -> None:
-    """Merge into the TOML sidecar, leaving the half we were not told alone."""
+    """Merge into the JSON sidecar, leaving the half we were not told alone."""
     path = state_path(root)
     current = load_state(path)
     if watches is None:
@@ -603,38 +598,133 @@ def read_library(root: Path | None = None) -> dict[str, Any]:
     }
 
 
-def write_library(scope: str, items: list[Cell], root: Path | None = None) -> None:
-    """Replace one library file with ``items``.
+#: What judb writes at the top of a library it creates. A header the user wrote
+#: themselves is kept instead (see `_edit_library`).
+_HEADERS: Final = {
+    "user": (
+        "# judb — your own debug cells, available in every project.\n"
+        f'# Cells tagged tags=["{SETUP_TAG}"] run themselves once per session.'
+    ),
+    "project": (
+        "# judb — debug cells for this project, meant to be committed.\n"
+        "# Anyone debugging here can load them; judb never runs them by itself."
+    ),
+}
+
+
+def _header_of(text: str) -> str:
+    """Return the comment block before the first marker of ``text``, if any."""
+    head: list[str] = []
+    for line in text.splitlines():
+        if line.startswith(MARKER):
+            block = "\n".join(head).strip("\n")
+            return block if _is_header(block) else ""
+        head.append(line)
+    return ""  # no marker at all: `parse` reads the whole file as one cell
+
+
+def _same(a: Cell, b: Cell) -> bool:
+    """Whether ``b`` (from the browser) names the stored cell ``a``."""
+    return (a.code, a.name, a.at, a.tags) == (b.code, b.name, b.at, b.tags)
+
+
+def _edit_library(
+    scope: str, root: Path | None, edit: Callable[[list[Cell]], list[Cell]]
+) -> None:
+    """Apply ``edit`` to one library file *as it is on disk right now*.
+
+    The browser's copy of a library dates from when it connected, and the file
+    is one the user edits by hand. So a change is never "replace the file with
+    what the browser has": the file is re-read, only the asked-for change is
+    made, and the rest — cells added meanwhile, the header, metadata judb does
+    not know — is written back as it was. An edit that changes nothing does not
+    touch the file at all.
 
     Writing the ``"project"`` scope is the *only* thing that puts a file inside
     the user's checkout, and it only ever happens because they asked
     (docs/PHASE3A_PLAN.md §6).
+
+    Raises
+    ------
+    OSError
+        If the file cannot be written.
+    """
+    path = user_library_path() if scope == "user" else project_library_path(root)
+    text = _read(path)
+    before = parse(text)
+    after = edit(before)
+    if after != before:
+        save(path, after, header=_header_of(text) or _HEADERS[scope])
+
+
+def add_to_library(scope: str, items: list[Cell], root: Path | None = None) -> None:
+    """Append ``items`` to a library, skipping any it already holds.
+
+    "Already holds" means the same code at the same location, so saving a tab
+    twice does not double it — and saving never removes anything.
 
     Parameters
     ----------
     scope
         ``"user"`` or ``"project"``.
     items
-        The whole library, in order — a save is a replace, so removing a cell
-        works through the same path as adding one.
+        The cells to add.
     root
         The project root; defaults to `judb.config.project_root`.
+
+    Raises
+    ------
+    OSError
+        If the file cannot be written.
     """
-    if scope == "user":
-        save(
-            user_library_path(),
-            items,
-            header=(
-                "# judb — your own debug cells, available in every project.\n"
-                f'# Cells tagged tags=["{SETUP_TAG}"] run themselves once per session.'
-            ),
-        )
-        return
-    save(
-        project_library_path(config.project_root() if root is None else root),
-        items,
-        header=(
-            "# judb — debug cells for this project, meant to be committed.\n"
-            "# Anyone debugging here can load them; judb never runs them by itself."
-        ),
-    )
+
+    def edit(stored: list[Cell]) -> list[Cell]:
+        result = list(stored)
+        for item in items:
+            if not any((c.code, c.at) == (item.code, item.at) for c in result):
+                result.append(item)
+        return result
+
+    _edit_library(scope, root, edit)
+
+
+def remove_from_library(scope: str, cell: Cell, root: Path | None = None) -> None:
+    """Remove the stored cell that ``cell`` names (the first, if it repeats).
+
+    A cell that is no longer in the file is not an error: it was already
+    removed, by hand or from another session.
+
+    Raises
+    ------
+    OSError
+        If the file cannot be written.
+    """
+
+    def edit(stored: list[Cell]) -> list[Cell]:
+        for i, candidate in enumerate(stored):
+            if _same(candidate, cell):
+                return stored[:i] + stored[i + 1 :]
+        return stored
+
+    _edit_library(scope, root, edit)
+
+
+def rekey_in_library(scope: str, cell: Cell, at: str, root: Path | None = None) -> None:
+    """Point the stored cell that ``cell`` names at the location key ``at``.
+
+    The manual answer to a renamed function: judb never guesses where cells
+    moved to (docs/PHASE3A_PLAN.md §10).
+
+    Raises
+    ------
+    OSError
+        If the file cannot be written.
+    """
+
+    def edit(stored: list[Cell]) -> list[Cell]:
+        for i, candidate in enumerate(stored):
+            if _same(candidate, cell):
+                return [*stored[:i], replace(candidate, at=at), *stored[i + 1 :]]
+        return stored
+
+    _edit_library(scope, root, edit)

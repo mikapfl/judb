@@ -80,8 +80,10 @@ Why not JSON (`.ipynb`-shaped) or TOML, the two obvious alternatives:
 - It is valid Python, so it is lintable, greppable, and syntax-highlighted by
   everything. TOML with code in triple-quoted strings is none of those.
 
-Unknown metadata keys are **preserved verbatim** on round-trip, so judb never
-eats another tool's metadata out of a file it shares.
+Unknown metadata keys are **preserved verbatim** in the two libraries, so judb
+never eats another tool's metadata out of a file it shares — which holds because
+judb *edits* a library on disk rather than rewriting it from the browser's copy
+(§7).
 
 ## 3. Scoping — one location key, three rungs
 
@@ -177,14 +179,18 @@ session and excluded from the saved notebook, so they never accumulate.
 ~/.config/judb/cells.py                    user library   (authored; may auto-run)
 <project root>/.judb/cells.py              project library (committed; never auto-runs)
 ~/.local/state/judb/notebooks/<slug>.py    the working notebook (auto-saved)
-~/.local/state/judb/notebooks/<slug>.toml  watches + active tab
+~/.local/state/judb/notebooks/<slug>.json  watches + active tab
 ```
 
 `<slug>` is the project directory's name plus 8 hex of the SHA-256 of its
 absolute path — readable in a directory listing, unique across checkouts.
 "Project root" is the nearest enclosing `pyproject.toml`, reusing the walk
 `config.py` already does for `[tool.judb]` (and stopping at the same place, for
-the same reason), or the cwd when there is none.
+the same reason), or the start directory when there is none. The walk starts
+where the process was when judb was imported (under pytest: where pytest was
+invoked), not where it stands at the first pause — a debuggee that changes
+directory first would otherwise file its notebook under a directory nobody
+debugs from again.
 
 **[DECISION] judb auto-writes only outside the repository.** The working
 notebook is saved continuously; doing that inside someone's checkout would mean
@@ -202,7 +208,13 @@ Client → server:
   file — a cell's `at` is what groups it into a tab, so there is one shape to
   keep straight rather than two, and a hand-edited file loads with no
   translation.
-- `save_cells` — `{scope: "user"|"project", cells: [...]}`, a whole-file replace.
+- `library_add` — `{scope: "user"|"project", cells: [...]}`; `library_remove` —
+  `{scope, cell}`; `library_rekey` — `{scope, cell, at}`. **Edits, not a
+  whole-file replace** (which is what was first built): a library is a file the
+  user also edits by hand, and the browser's copy dates from connect time, so
+  replacing the file from it undid their edits — and "save this tab" replaced
+  every cell sharing the tab's key, which for Scratch meant every un-keyed cell,
+  setup cells included. The server re-reads the file and applies the one change.
 - `set_watches` — unchanged on the wire; the server now *persists* what passes
   through it.
 
@@ -210,7 +222,7 @@ Server → client, pushed on websocket connect (no request needed):
 
 - `notebook` — `{cells, active, watches}`, the restored machine-local state.
 - `library` — `{user: [Cell], project: [Cell], paths: {...}}`, re-sent after any
-  `save_cells`.
+  library edit, with an `error` string when the write failed.
 
 `paused` / `frame_selected` gain an optional `location` string.
 
@@ -244,16 +256,21 @@ computed from a frame in `_frame_view`, and setup cells execute through
 > recorded where they belong: the wire carries a *flat* cell list rather than
 > nested tabs (§7), and notebook adoption is guarded by "nothing on screen is
 > ever overwritten" rather than by a once-per-session flag — a reconnect then
-> needs no special case, because it simply finds nothing to do.
+> needs no special case, because it simply finds nothing to do. A review after
+> the first implementation then changed four things, each recorded in its
+> section: libraries are edited on disk, never replaced (§7); the notebook is
+> flushed before anything that can end the debuggee, not merely debounced; the
+> project root is fixed at startup (§6); and a file-pinned tab follows the frame
+> anywhere in its file, as §3's ladder always said it should.
 
 ### S1 — the notebook survives the process
 
 - **`judb/cells.py`** (new): a frozen `Cell` (`code`, `name`, `at`, `tags`,
   `extra`), `parse`/`dumps`, `load`/`save` (atomic: temp file + `os.replace`),
-  `location_of(frame, root)` and `matches(at, location)`.
+  and `location_of(frame, root)`.
 - **`judb/config.py`**: factor the `pyproject.toml` walk out of `_project_table`
   into `project_root()`; add `state_dir()` beside `user_config_path()`.
-- **`judb/server.py`**: `save_notebook` / `save_cells` handled off the queue;
+- **`judb/server.py`**: `save_notebook` and the library edits handled off the queue;
   `notebook` + `library` pushed on connect; the `set_watches` list persisted as
   it passes.
 - **`frontend/src/lib/connection.svelte.ts`**: `tabs` (Scratch only for now),

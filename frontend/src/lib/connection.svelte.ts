@@ -8,7 +8,7 @@ import type {
   CompletionsMsg,
   ExceptionInfo,
   FrameView,
-  LibraryMsg,
+  LibraryScope,
   MimeBundle,
   MplMsg,
   NotebookMsg,
@@ -90,12 +90,15 @@ export interface ExpandState {
 const RETRY_MIN_MS = 250;
 const RETRY_MAX_MS = 5000;
 
-/** How long after the last edit the notebook is written to disk. Long enough
- *  that typing does not chatter, short enough that a debuggee which runs off and
- *  dies takes nothing with it. */
-const SAVE_DEBOUNCE_MS = 500;
+/** The longest an edit waits before the notebook is written to disk. Long
+ *  enough that typing does not chatter; and since anything that could end the
+ *  debuggee flushes first (see `flush`), nothing is lost to the wait. */
+const SAVE_DELAY_MS = 500;
 
-class Connection {
+/** Commands after which the debuggee may never pause — or exist — again. */
+const RESUMES: ReadonlySet<Command["cmd"]> = new Set(["continue", "next", "step", "return", "quit"]);
+
+export class Connection {
   status = $state<Status>("connecting");
   filename = $state("");
   lineno = $state(0);
@@ -170,9 +173,11 @@ class Connection {
   // count shown as `[n]`.
   #nextCellId = 1;
   #execCount = 0;
-  // Debounce timer for `save_notebook`.
+  // Pending `save_notebook` (see `touch`).
   #saveTimer: ReturnType<typeof setTimeout> | null = null;
-  // Setup cells still waiting for the first pause to run them.
+  // Setup cells run once a session: whether they have been materialised, and
+  // the ones still waiting for the first pause to run them.
+  #setupDone = false;
   #pendingSetup: number[] = [];
   // FIFO of cell ids awaiting a `cell_result`. Execution is serialized on the
   // debuggee thread, so results come back in send order — this correlates each
@@ -284,6 +289,10 @@ class Connection {
   }
 
   send(cmd: Command): void {
+    // Resuming may be the last thing this debuggee ever hears: a program that
+    // runs to its end takes the server with it. Whatever is unsaved goes first
+    // — the server thread writes it before the debuggee is even told to move.
+    if (RESUMES.has(cmd.cmd)) this.flush();
     this.#ws?.send(JSON.stringify(cmd));
   }
 
@@ -362,7 +371,7 @@ class Connection {
     this.touch();
   }
 
-  /** The tab for `at`, created (empty, with one blank cell) if there is none. */
+  /** The tab for `at`, created (with no cells yet) if there is none. */
   tabFor(at: string): number {
     const found = this.tabs.findIndex((t) => t.at === at);
     if (found >= 0) return found;
@@ -426,6 +435,7 @@ class Connection {
     cell.outputs = [];
     cell.count = ++this.#execCount;
     this.#pendingExec.push(id);
+    this.flush(); // a cell can end the process too (`sys.exit()`, a segfault)
     this.send({ cmd: "execute_cell", code });
   }
 
@@ -558,7 +568,7 @@ class Connection {
     const trimmed = expr.trim();
     if (!trimmed || this.watches.includes(trimmed)) return;
     this.watches.push(trimmed);
-    this.#syncWatches();
+    this.#sendWatches();
   }
 
   /** Replace the expression at `index`; an emptied one is removed. */
@@ -573,13 +583,13 @@ class Connection {
       return;
     }
     this.watches[index] = trimmed;
-    this.#syncWatches();
+    this.#sendWatches();
   }
 
   removeWatch(index: number): void {
     if (index < 0 || index >= this.watches.length) return;
     this.watches.splice(index, 1);
-    this.#syncWatches();
+    this.#sendWatches();
   }
 
   /** The value for the row at `index`, or undefined while it is in flight.
@@ -590,37 +600,40 @@ class Connection {
     return value?.expr === this.watches[index] ? value : undefined;
   }
 
-  /** Persist the list and tell the backend. Sending the whole list (rather than
-   *  add/remove deltas) keeps the two ends trivially in sync. */
+  /** Tell the backend the list. Sending the whole list (rather than add/remove
+   *  deltas) keeps the two ends trivially in sync, and persistence rides along:
+   *  the server writes what it is told next to the saved notebook, which (unlike
+   *  localStorage, scoped to a port that changes every run) is still there for
+   *  the next run of the program. */
   #sendWatches(): void {
     this.send({ cmd: "set_watches", exprs: [...this.watches] });
-  }
-
-  #syncWatches(): void {
-    // Persistence rides along: the server writes the list it is told next to
-    // the saved notebook, which (unlike localStorage, scoped to a port that
-    // changes every run) is still there for the next run of the program.
-    this.#sendWatches();
   }
 
   // --- persistence ----------------------------------------------------
   //
   // The browser owns the notebook; the backend owns its durability. Saving is
-  // debounced and handled by the *server* thread, so a debuggee that runs off
-  // and dies without pausing again takes nothing with it
-  // (docs/PHASE3A_PLAN.md §1, §8).
+  // handled by the *server* thread, so a debuggee that runs off and dies without
+  // pausing again takes nothing with it (docs/PHASE3A_PLAN.md §1, §8).
 
-  /** Note that the notebook changed; the write itself is debounced. */
+  /** Note that the notebook changed. It is written within `SAVE_DELAY_MS` of
+   *  the *first* unsaved change — the timer is not pushed back by later ones,
+   *  so steady typing cannot starve the save. */
   touch(): void {
-    if (this.#saveTimer !== null) clearTimeout(this.#saveTimer);
-    this.#saveTimer = setTimeout(() => {
-      this.#saveTimer = null;
-      this.send({
-        cmd: "save_notebook",
-        cells: this.#flatten(),
-        active: this.tabs[this.active]?.at ?? "",
-      });
-    }, SAVE_DEBOUNCE_MS);
+    this.#saveTimer ??= setTimeout(() => this.flush(), SAVE_DELAY_MS);
+  }
+
+  /** Write the notebook now, if anything is waiting to be written. Called
+   *  wherever waiting could lose it: before the debuggee is resumed or runs a
+   *  cell (either may be the end of the process), and as the page goes away. */
+  flush(): void {
+    if (this.#saveTimer === null) return;
+    clearTimeout(this.#saveTimer);
+    this.#saveTimer = null;
+    this.send({
+      cmd: "save_notebook",
+      cells: this.#flatten(),
+      active: this.tabs[this.active]?.at ?? "",
+    });
   }
 
   /** The notebook as the file sees it: flat, each cell carrying its tab's key.
@@ -680,10 +693,16 @@ class Connection {
     this.active = wanted >= 0 ? wanted : 0;
   }
 
-  /** Follow the selected frame, if a tab is pinned there. */
+  /** Follow the selected frame, if a tab is pinned there: to the tab for this
+   *  very function, else to one pinned to its file (a file key suits anywhere
+   *  in the file — the same ladder the library uses). */
   #noteLocation(location: string): void {
     this.locationKey = location;
-    const match = location ? this.tabs.findIndex((t) => t.at === location) : -1;
+    const exact = location ? this.tabs.findIndex((t) => t.at === location) : -1;
+    const match =
+      exact >= 0 || !location
+        ? exact
+        : this.tabs.findIndex((t) => t.at !== "" && matchesLocation(t.at, location));
     if (match < 0 || match === this.active) {
       this.pendingTab = -1;
       return;
@@ -699,45 +718,32 @@ class Connection {
   }
 
   // --- the cell libraries ---------------------------------------------
+  //
+  // A library is a file the user also edits by hand, so every change is a
+  // small edit the *server* applies to the file as it is on disk; the browser
+  // never sends "the library" back. The server answers with a fresh `library`.
 
-  /** Replace one library file; the server echoes the new `library` back. */
-  #saveLibrary(scope: "user" | "project", cells: SavedCell[]): void {
-    this.send({ cmd: "save_cells", scope, cells });
-  }
-
-  /** Save the tab in front into a library, as the cells for its location.
-   *
-   *  A *replace* of that location's entries rather than an append, so pressing
-   *  it twice does not double them: what is on screen is what that location's
-   *  cells are. */
-  saveTabTo(scope: "user" | "project"): void {
+  /** Add the tab in front to a library. Adding never removes anything, and a
+   *  cell the library already holds (same code, same location) is skipped, so
+   *  pressing this twice does not double them. */
+  saveTabTo(scope: LibraryScope): void {
     const tab = this.tabs[this.active];
     if (!tab) return;
-    const mine = tab.cells
+    const cells = tab.cells
       .filter((cell) => !cell.setup && cell.code.trim())
       .map((cell) => ({ code: cell.code, name: cell.name ?? "", at: tab.at, tags: [] }));
-    if (mine.length === 0) return;
-    this.#saveLibrary(scope, [
-      ...this.library[scope].filter((cell) => cell.at !== tab.at),
-      ...mine,
-    ]);
+    if (cells.length > 0) this.send({ cmd: "library_add", scope, cells });
   }
 
   /** Drop a cell from a library. */
-  removeFromLibrary(scope: "user" | "project", index: number): void {
-    this.#saveLibrary(
-      scope,
-      this.library[scope].filter((_, i) => i !== index),
-    );
+  removeFromLibrary(scope: LibraryScope, cell: SavedCell): void {
+    this.send({ cmd: "library_remove", scope, cell });
   }
 
   /** Re-key a library cell to where we are now — the manual answer to a rename
    *  (judb never guesses which function your cells moved to). */
-  rekeyLibraryCell(scope: "user" | "project", index: number): void {
-    this.#saveLibrary(
-      scope,
-      this.library[scope].map((cell, i) => (i === index ? { ...cell, at: this.locationKey } : cell)),
-    );
+  rekeyLibraryCell(scope: LibraryScope, cell: SavedCell): void {
+    this.send({ cmd: "library_rekey", scope, cell, at: this.locationKey });
   }
 
   /** Put a library cell into the notebook (at the end of the tab in front). */
@@ -748,18 +754,14 @@ class Connection {
     return added.id;
   }
 
-  /** The library cells that belong where we are now, richest key first. */
-  matchingHere(scope: "user" | "project"): { cell: SavedCell; index: number }[] {
-    return this.library[scope]
-      .map((cell, index) => ({ cell, index }))
-      .filter(({ cell }) => matchesLocation(cell.at, this.locationKey));
-  }
-
-  /** Materialise the user's `setup` cells into Scratch and run them once. */
+  /** Materialise the user's `setup` cells into Scratch and run them — once a
+   *  session, not once per `library` message: the library is pushed again after
+   *  every edit to it, and a setup cell the user deleted must stay deleted. */
   #materialiseSetup(): void {
-    const setup = this.library.user.filter((cell) => cell.tags?.includes("setup"));
-    const already = this.tabs[0].cells.some((cell) => cell.setup);
-    if (setup.length === 0 || already) return;
+    if (this.#setupDone) return;
+    this.#setupDone = true;
+    const setup = this.library.user.filter((cell) => cell.tags.includes("setup"));
+    if (setup.length === 0) return;
     const made = setup.map((cell) => this.#newCell(cell.code, cell.name, true));
     this.tabs[0].cells.unshift(...made);
     this.#pendingSetup = made.map((cell) => cell.id);
@@ -871,6 +873,8 @@ class Connection {
         break;
       case "library":
         this.library = { user: msg.user, project: msg.project, paths: msg.paths };
+        // An explicit save that failed must not look like one that worked.
+        if (msg.error) this.notice = msg.error;
         this.#materialiseSetup();
         break;
       case "completions":

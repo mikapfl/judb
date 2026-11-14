@@ -158,6 +158,66 @@ def test_pytest_pdbcls_lands_at_failure(tmp_path: Path):
             proc.kill()
 
 
+def test_pytest_keeps_the_project_when_a_test_changes_directory(tmp_path: Path):
+    """pytest imports a `--pdbcls` class only when it first needs a debugger —
+    here, *after* the test has moved to its temp dir. judb must still key the
+    pause to the project pytest was invoked in, or cells saved while debugging
+    such a test are filed under a directory that is gone by the next run."""
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "pyproject.toml").write_text("[project]\nname = 'demo'\n")
+    (project / "test_wander.py").write_text(
+        textwrap.dedent(
+            """
+            def test_boom(tmp_path, monkeypatch):
+                monkeypatch.chdir(tmp_path)
+                assert 1 == 2
+            """
+        )
+    )
+    env = {
+        **os.environ,
+        "JUDB_NO_BROWSER": "1",
+        "XDG_STATE_HOME": str(tmp_path / "state"),
+        "XDG_CONFIG_HOME": str(tmp_path / "config"),
+    }
+    proc = subprocess.Popen(
+        [
+            sys.executable, "-m", "pytest", "test_wander.py",
+            "-s", "-p", "no:cacheprovider",
+            "--pdb", "--pdbcls=judb:Debugger",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        cwd=project,
+        bufsize=1,
+    )  # fmt: skip
+    lines: list[str] = []
+    try:
+        url = read_judb_url(proc, lines)
+
+        async def flow() -> tuple[dict[str, Any], dict[str, Any]]:
+            async with (
+                ClientSession() as session,
+                session.ws_connect(ws_url(url)) as ws,
+            ):
+                library = await recv_type(ws, "library")
+                paused = await recv_type(ws, "paused")
+                await ws.send_json({"cmd": "continue"})
+                await recv_type(ws, "running")
+                return paused, library
+
+        paused, library = asyncio.run(flow())
+    finally:
+        proc.terminate()
+        proc.wait(timeout=10)
+
+    assert paused["location"] == "test_wander.py::test_boom"
+    assert library["paths"]["project"] == str(project / ".judb" / "cells.py")
+
+
 def test_repeated_set_trace_reuses_one_server():
     """Several `judb.set_trace()` calls in one run share one server (and tab)."""
     dbg = Debugger()

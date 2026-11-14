@@ -53,6 +53,37 @@ test("the notebook outlives the debuggee process", async ({ page }) => {
   }
 });
 
+test("a cell run just before Quit is there on the next run", async ({ page }) => {
+  // The everyday ending: run the cell that explains the bug, read the answer,
+  // quit. The process is gone within milliseconds — long before any save timer
+  // — so the notebook has to be written *before* the debuggee is told to go.
+  const xdg = xdgRoot();
+  const first = await startDebuggee("frontend/e2e/debuggee.py", xdg);
+  try {
+    await page.goto(first.url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+    await typeInFirstCell(page, "scale * 21");
+    await page.keyboard.press("Shift+Enter");
+    await expect(page.locator(".cell").first()).toContainText("42.0", { timeout: 15_000 });
+    await page.keyboard.type("typed but never run");
+    const gone = new Promise((resolve) => first.proc.once("exit", resolve));
+    await page.getByRole("button", { name: "Quit" }).click();
+    await gone;
+  } finally {
+    first.proc.kill("SIGKILL");
+  }
+
+  const second = await startDebuggee("frontend/e2e/debuggee.py", xdg);
+  try {
+    await page.goto(second.url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+    await expect(page.locator(".cell .cm-content").nth(0)).toContainText("scale * 21");
+    await expect(page.locator(".cell .cm-content").nth(1)).toContainText("typed but never run");
+  } finally {
+    second.proc.kill("SIGKILL");
+  }
+});
+
 test("a pinned tab follows the selected frame", async ({ page }) => {
   const xdg = xdgRoot();
   const { proc, url } = await startDebuggee("frontend/e2e/debuggee.py", xdg);
@@ -103,6 +134,42 @@ test("the user's library supplies setup cells and cells to insert", async ({ pag
     await page.getByRole("button", { name: "Saved cells" }).click();
     await page.getByRole("button", { name: "Insert" }).last().click();
     await expect(page.locator(".cell .cm-content").last()).toContainText("math.tau");
+  } finally {
+    proc.kill("SIGKILL");
+  }
+});
+
+test("saving a tab adds to the library file and leaves the rest of it alone", async ({ page }) => {
+  // The library is a file the user edits by hand. Saving Scratch used to
+  // replace every un-keyed cell in it — the setup cells included — and rewrite
+  // the rest from the copy the browser was sent when it connected.
+  const xdg = xdgRoot();
+  const library = path.join(xdg.config, "judb", "cells.py");
+  const byHand =
+    "# my own notes at the top\n\n" +
+    '# %% imports tags=["setup"]\nimport math\n\n' +
+    '# %% from another tool foo="bar"\nmath.tau\n';
+  fs.mkdirSync(path.dirname(library), { recursive: true });
+  fs.writeFileSync(library, byHand);
+  const { proc, url } = await startDebuggee("frontend/e2e/debuggee.py", xdg);
+  try {
+    await page.goto(url);
+    await expect(page.locator(".status")).toHaveText("paused", { timeout: 15_000 });
+    await expect(page.locator(".cell.setup .count")).toHaveText("[1]", { timeout: 15_000 });
+
+    // Meanwhile, in the user's editor: one more cell goes into the file.
+    const edited = byHand + "\n# %% added while judb was open\nmath.e\n";
+    fs.writeFileSync(library, edited);
+
+    await page.locator(".cell:not(.setup) .cm-content").first().click();
+    await page.keyboard.type("scale + 1");
+    await page.getByRole("button", { name: "Saved cells" }).click();
+    await page.locator(".library section", { hasText: "Yours" }).getByRole("button", { name: /^Save/ }).click();
+
+    // Exactly the file as it was on disk, plus the one new cell.
+    await expect.poll(() => fs.readFileSync(library, "utf8")).toBe(edited + "\n# %%\nscale + 1\n");
+    // And the popover now shows what is on disk, hand edit included.
+    await expect(page.locator(".library")).toContainText("added while judb was open");
   } finally {
     proc.kill("SIGKILL");
   }

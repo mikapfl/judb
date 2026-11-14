@@ -48,7 +48,8 @@ _STATE_TYPES = frozenset({"paused", "running", "finished"})
 
 # Commands the *server thread* answers itself, because they only touch the disk
 # and must not wait for the debuggee to pause again (see `DebugServer._store`).
-_STORAGE_COMMANDS = frozenset({"save_notebook", "save_cells"})
+_LIBRARY_COMMANDS = frozenset({"library_add", "library_remove", "library_rekey"})
+_STORAGE_COMMANDS = _LIBRARY_COMMANDS | {"save_notebook"}
 
 
 def _cells_from_wire(data: object) -> list[cells.Cell]:
@@ -57,6 +58,21 @@ def _cells_from_wire(data: object) -> list[cells.Cell]:
         return []
     decoded = (cells.Cell.from_wire(entry) for entry in data)
     return [cell for cell in decoded if cell is not None]
+
+
+def _edit_library(cmd: str, scope: str, data: dict[str, Any]) -> None:
+    """Apply one library command to the file on disk (see `judb.cells`)."""
+    if cmd == "library_add":
+        cells.add_to_library(scope, _cells_from_wire(data.get("cells")))
+        return
+    cell = cells.Cell.from_wire(data.get("cell"))
+    if cell is None:
+        return
+    if cmd == "library_remove":
+        cells.remove_from_library(scope, cell)
+    else:
+        at = data.get("at")
+        cells.rekey_in_library(scope, cell, at if isinstance(at, str) else "")
 
 
 class DebugServer:
@@ -312,7 +328,7 @@ class DebugServer:
         Parameters
         ----------
         data
-            The decoded command (``save_notebook``, ``save_cells``, or the
+            The decoded command (``save_notebook``, a ``library_*`` edit, or the
             ``set_watches`` that is also forwarded to the debugger).
         """
         cmd = data.get("cmd")
@@ -324,25 +340,31 @@ class DebugServer:
                 )
             return
 
-        items = _cells_from_wire(data.get("cells"))
         if cmd == "save_notebook":
             active = data.get("active")
             await asyncio.to_thread(
-                cells.write_notebook, items, active if isinstance(active, str) else ""
+                cells.write_notebook,
+                _cells_from_wire(data.get("cells")),
+                active if isinstance(active, str) else "",
             )
             return
 
         scope = data.get("scope")
         if scope not in ("user", "project"):
             await self._emit(
-                {"type": "error", "message": f"bad save_cells scope: {scope!r}"}
+                {"type": "error", "message": f"bad {cmd} scope: {scope!r}"}
             )
             return
-        await asyncio.to_thread(cells.write_library, scope, items)
-        # Everything that can see this artifact should now see the new version.
-        await self._emit(
-            {"type": "library", **await asyncio.to_thread(cells.read_library)}
-        )
+        # The library is re-read either way, so the browser shows what is on
+        # disk — including after a save that failed, which it must hear about:
+        # this one was asked for, unlike the notebook's quiet auto-save.
+        reply: dict[str, Any] = {"type": "library"}
+        try:
+            await asyncio.to_thread(_edit_library, str(cmd), scope, data)
+        except OSError as exc:
+            reply["error"] = f"could not save the cell library: {exc}"
+        reply.update(await asyncio.to_thread(cells.read_library))
+        await self._emit(reply)
 
     async def _emit(self, message: dict[str, Any]) -> None:
         """Queue a message for the browser from inside the event loop."""

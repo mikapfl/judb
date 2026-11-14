@@ -248,6 +248,9 @@ export interface SavedCell {
   tags: string[];
 }
 
+/** Which of the two cell libraries: the user's own, or the project's. */
+export type LibraryScope = "user" | "project";
+
 /** Pushed on connect: the working notebook as the *last run* left it. The wire
  *  carries a flat list exactly like the file; `at` is what groups cells into
  *  tabs, and the browser does the grouping. */
@@ -261,9 +264,12 @@ export interface NotebookMsg {
   watches: string[];
 }
 
-/** Pushed on connect and after any `save_cells`: the two cell libraries. */
+/** Pushed on connect and after any `library_*` edit: the two cell libraries,
+ *  as they are on disk. */
 export interface LibraryMsg {
   type: "library";
+  /** Set when the edit that prompted this message could not be written. */
+  error?: string;
   /** The user's own cells; `tags: ["setup"]` ones run themselves once. */
   user: SavedCell[];
   /** The project's committed cells. judb never runs these by itself. */
@@ -320,9 +326,14 @@ export type Command =
   /** The whole working notebook, flat, plus which tab was in front. Saved by
    *  the *server* thread, not the debuggee — see docs/PHASE3A_PLAN.md §8. */
   | { cmd: "save_notebook"; cells: SavedCell[]; active: string }
-  /** Replace one library file. Writing `"project"` is the only thing judb ever
-   *  puts inside the user's checkout, and only because they asked. */
-  | { cmd: "save_cells"; scope: "user" | "project"; cells: SavedCell[] }
+  /** Edits to one library file, applied by the server to the file *as it is on
+   *  disk* — never a replace with the browser's copy, which dates from connect
+   *  and would undo whatever the user did to the file in their editor since.
+   *  `cell` names an entry by its content. Writing `"project"` is the only thing
+   *  judb ever puts inside the user's checkout, and only because they asked. */
+  | { cmd: "library_add"; scope: LibraryScope; cells: SavedCell[] }
+  | { cmd: "library_remove"; scope: LibraryScope; cell: SavedCell }
+  | { cmd: "library_rekey"; scope: LibraryScope; cell: SavedCell; at: string }
   | { cmd: "mpl_event"; id: string; content: unknown }
   | { cmd: "mpl_download"; id: string; format: string }
   | { cmd: "interrupt" };

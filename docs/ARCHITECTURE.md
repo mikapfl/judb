@@ -111,7 +111,7 @@ to ask:
 | Bypass | Why | Where |
 | --- | --- | --- |
 | `interrupt` | that thread is *inside* a runaway cell and will not drain `inbound` until it finishes | `server.py` → `_handle_ws`, `debugger.py` → `Debugger.interrupt` |
-| `save_notebook`, `save_cells` | that thread drains commands only *while paused*; a queued save is lost exactly when the program runs off and dies | `server.py` → `DebugServer._store` |
+| `save_notebook`, `library_add` / `library_remove` / `library_rekey` | that thread drains commands only *while paused*; a queued save is lost exactly when the program runs off and dies | `server.py` → `DebugServer._store` |
 
 The second is safe because storage touches only the disk — no frame, no shell,
 nothing executed — which is why `judb/cells.py` is written as pure file
@@ -251,10 +251,10 @@ thread own it.
 | --- | --- |
 | The type | `Cell` (frozen), `Cell.to_wire`, `Cell.from_wire` |
 | Percent format | `parse`, `dumps`, `_parse_marker`, `_parse_value`, `_is_header`, `MARKER` |
-| Files | `load`, `save` (atomic), `load_state`, `save_state` |
+| Files | `load`, `save`, `_write_atomic`, `load_state`, `save_state` |
 | Where things live | `user_library_path`, `project_library_path`, `notebook_path`, `state_path`, `_slug` |
-| Location keys | `location_of`, `matches` |
-| Tier API (what the server calls) | `read_notebook`, `write_notebook`, `write_watches`, `read_library`, `write_library` |
+| Location keys | `location_of` (matching is the browser's: `matchesLocation`) |
+| Tier API (what the server calls) | `read_notebook`, `write_notebook`, `write_watches`, `read_library`, and the library *edits* `add_to_library`, `remove_from_library`, `rekey_in_library` (each re-reads the file — see §5.5) |
 
 ### config — `judb/config.py`
 
@@ -381,13 +381,13 @@ source of truth and no prop-drilling; `conn` *is* the client-side model.
 | Transport | `connect`, `send`, `#scheduleReconnect`, `#onMessage` |
 | Notebook | `tabs`, `active`, `cells` (getter → active tab), `addCell`, `deleteCell`, `moveCell`, `editCell`, `runCell` |
 | Tabs | `selectTab`, `tabFor`, `pinCell`, `pinTab`, `closeTab`, `#dropEmptyTabs`, `tabTitle` |
-| Persistence | `touch` (debounced), `#flatten`, `#adoptNotebook`, `#untouched`, `#noteLocation` |
-| Libraries | `saveTabTo`, `insertFromLibrary`, `removeFromLibrary`, `rekeyLibraryCell`, `matchingHere`, `#materialiseSetup`, `#runPendingSetup` |
+| Persistence | `touch` (delayed), `flush` (before anything that can end the debuggee), `#flatten`, `#adoptNotebook`, `#untouched`, `#noteLocation` |
+| Libraries | `saveTabTo`, `insertFromLibrary`, `removeFromLibrary`, `rekeyLibraryCell`, `matchesLocation`, `#materialiseSetup`, `#runPendingSetup` |
 | Frames | `selectFrame`, `#showFrame`, `location`, `locationKey` |
 | Source | `openFile`, `backToFrame`, `shownFilename`, `shownSource`, `shownBreakpoints` |
 | Breakpoints | `toggleBreak`, `setBreak`, `clearBreak`, `breakpointAt` |
 | Variables | `expand`, `collapse`, `expansionOf` |
-| Watches | `addWatch`, `setWatch`, `removeWatch`, `watchValue`, `#syncWatches` |
+| Watches | `addWatch`, `setWatch`, `removeWatch`, `watchValue`, `#sendWatches` |
 | Completion | `complete`, `#flushCompletions` (FIFO-correlated) |
 | Figures | `registerMpl`, `sendMplEvent`, `sendMplDownload` |
 
@@ -456,7 +456,8 @@ other.
 | `set_break`, `clear_break` | `_toggle_break` | `breakpoints` |
 | `mpl_event`, `mpl_download` | `mpl_backend.dispatch` / `download` | `mpl` |
 | `interrupt` | **server thread** → `Debugger.interrupt` | — |
-| `save_notebook`, `save_cells` | **server thread** → `DebugServer._store` | — / `library` |
+| `save_notebook` | **server thread** → `DebugServer._store` | — |
+| `library_add`, `library_remove`, `library_rekey` | **server thread** → `DebugServer._store` | `library` (with `error` if the write failed) |
 
 **Server → client** (`ServerMsg`):
 
@@ -516,15 +517,22 @@ import numpy as np
 ```
 
 `# %% <name> key=value…` at column 0. `tags` is the standard notebook-metadata
-key jupytext round-trips; unknown keys are preserved verbatim (`Cell.extra`), so
-judb never eats another tool's metadata. Parsed by `cells.parse`, written by
-`cells.dumps`.
+key jupytext round-trips. Parsed by `cells.parse`, written by `cells.dumps`.
+
+The two libraries are files the user also edits by hand, so judb never replaces
+one with the browser's copy (which dates from connect time). A library command
+names *one change*; `cells._edit_library` re-reads the file, makes that change,
+and writes the rest back as it was — cells added in an editor meanwhile, the
+header comment, and metadata keys judb does not know (`Cell.extra`, which is why
+it never needs to cross the wire). The working notebook is the opposite case:
+judb's own state, rewritten whole on every save.
 
 ### 5.6 The location key
 
 `"<path relative to the project root>::<co_qualname>"`, e.g.
 `etl/clean.py::Cleaner.run` (`cells.location_of`). Matching is a ladder of one
-mechanism (`cells.matches`, mirrored as `matchesLocation` in the store):
+mechanism (`matchesLocation` in the store — the browser decides both which
+library cells belong here and which tab follows the frame):
 
 | `at` | matches |
 | --- | --- |
@@ -540,8 +548,8 @@ deliberately absent: line numbers move on every edit of the code under debug.
 
 | File | Tier | Written by |
 | --- | --- | --- |
-| `$XDG_STATE_HOME/judb/notebooks/<slug>.py` | the working notebook | automatically, debounced |
-| `$XDG_STATE_HOME/judb/notebooks/<slug>.toml` | watches + active tab | automatically |
+| `$XDG_STATE_HOME/judb/notebooks/<slug>.py` | the working notebook | automatically: within half a second of an edit, and always before the debuggee is resumed |
+| `$XDG_STATE_HOME/judb/notebooks/<slug>.json` | watches + active tab | automatically |
 | `$XDG_CONFIG_HOME/judb/cells.py` | the user's library | on explicit save, or by hand |
 | `<project>/.judb/cells.py` | the project's committed library | **only** on explicit save |
 | `<project>/pyproject.toml` `[tool.judb]`, `$XDG_CONFIG_HOME/judb/config.toml` | settings | by hand |
@@ -761,13 +769,18 @@ websocket. That token is the *entire* boundary, and it has to be: the console
 executes arbitrary code in the debuggee, so anything that reaches it is
 game-over anyway. Two consequences worth restating rather than re-litigating:
 `open_file` reading any path adds no exposure the console does not already have,
-and `save_cells` writes a *fixed* filename under the project root, not a
+and the `library_*` commands write a *fixed* filename under the project root, not a
 client-supplied path.
 
-### 8.6 Project identity is cwd-shaped, and that is visible to users
+### 8.6 Project identity is start-directory-shaped, and that is visible to users
 
-`config.project_root()` walks up for the nearest `pyproject.toml`, falling back
-to the cwd, and `cells` keys the saved notebook on the result. Two honest
+`config.project_root()` walks up for the nearest `pyproject.toml` from the
+directory the process was in when judb was imported — or, under pytest, the
+directory pytest was invoked in, since a `--pdbcls` class is imported only once
+a test (which may have `chdir`ed) needs it — falling back to that directory
+itself, and `cells` keys the saved notebook on the result. It is deliberately
+*not* the cwd at the first pause: a debuggee that changes directory must stay
+the same project. Two honest
 consequences: a stray script with no project gets a notebook per *directory it
 was run from*, and a whole pytest suite shares one notebook (its project's).
 Both are acceptable — and the finer-grained answer already exists in the

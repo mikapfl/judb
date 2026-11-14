@@ -7,22 +7,28 @@ preference, and they live in two different places.
   behaves before any browser exists: whether to open a tab, whether an uncaught
   exception lands in post-mortem, which matplotlib mode figures use. Those are
   what this module resolves.
-* **Pure-UI preferences** — the theme, the watch list — stay in the browser's
-  ``localStorage``, where they already are. They are unknowable to the Python
-  side until a tab connects, and syncing them back would buy a bidirectional
-  settings protocol we do not need.
+* **Pure-UI preferences** — the theme — stay in the browser's ``localStorage``,
+  where they already are. They are unknowable to the Python side until a tab
+  connects, and syncing them back would buy a bidirectional settings protocol
+  we do not need.
 
 Resolution order, most specific first::
 
     explicit argument  (e.g. ``set_trace(open_browser=False)``)
     CLI flag           (``python -m judb --no-browser …`` → `configure`)
-    project            nearest ``pyproject.toml`` walking up from the cwd, `[tool.judb]`
+    project            nearest ``pyproject.toml`` walking up from the start dir, `[tool.judb]`
     user               ``$XDG_CONFIG_HOME/judb/config.toml`` (top-level keys)
     default            the `Settings` field defaults
 
 Only the *nearest* ``pyproject.toml`` is consulted — the first one found going
 up is the project root, and a checkout nested inside another project should not
 inherit the outer one's debugger settings.
+
+The walk starts from the **start directory**: where the process was when judb
+was imported (or where pytest was invoked), *not* where it is when the debugger
+first pauses. A debuggee that changes directory before its first breakpoint —
+``monkeypatch.chdir(tmp_path)`` in a test, a script that moves to its data —
+must not change which project judb thinks it is debugging.
 
 ``JUDB_NO_BROWSER`` remains a hard override on top of all of this (see
 :meth:`judb.debugger.Debugger.start_server`): it exists so a headless box or a
@@ -35,6 +41,7 @@ debugger because a stale key sits in someone's config would be a poor trade.
 
 from __future__ import annotations
 
+import functools
 import sys
 import tomllib
 from collections.abc import Mapping
@@ -136,35 +143,61 @@ def _find_pyproject(start: Path) -> Path | None:
     return None
 
 
+def _cwd() -> Path:
+    """Return the resolved current directory, surviving one that was deleted."""
+    try:
+        return Path.cwd().resolve()
+    except OSError:  # there is no project to find from a directory that is gone
+        return Path()
+
+
+def _initial_dir() -> Path:
+    """Return the directory this process's project search should start from.
+
+    The current directory — except under pytest, which imports a ``--pdbcls``
+    class only when it first needs a debugger. By then a test may well have
+    changed directory (``monkeypatch.chdir(tmp_path)``), so there the answer is
+    the directory pytest was *invoked* in. Read defensively off a module pytest
+    has already imported: if that private spelling ever changes, the lookup
+    simply stops finding anything and the cwd is used.
+    """
+    debugging = sys.modules.get("_pytest.debugging")
+    pytest_config = getattr(getattr(debugging, "pytestPDB", None), "_config", None)
+    invoked_in = getattr(getattr(pytest_config, "invocation_params", None), "dir", None)
+    return invoked_in.resolve() if isinstance(invoked_in, Path) else _cwd()
+
+
+#: Where the project search starts (see the module docstring), fixed when judb
+#: is imported so that a later ``os.chdir`` in the debuggee cannot move it.
+_start_dir: Path = _initial_dir()
+
+
+@functools.cache
+def _root_from(start: Path) -> Path:
+    """Return the project root for a (resolved) starting directory."""
+    found = _find_pyproject(start)
+    return found.parent if found is not None else start
+
+
 def project_root(*, cwd: Path | None = None) -> Path:
     """Return the directory judb treats as "this project".
 
-    The same nearest-``pyproject.toml`` rule the ``[tool.judb]`` layer uses, so
-    a project's settings and its saved cells (docs/PHASE3A_PLAN.md §6) always
-    agree on what the project *is*. The result is cached for the same reason
-    `settings` is: a debuggee that changes directory mid-run must not make judb
-    answer differently later on.
+    The same nearest-``pyproject.toml`` rule, from the same start directory, as
+    the ``[tool.judb]`` layer, so a project's settings and its saved cells
+    (docs/PHASE3A_PLAN.md §6) always agree on what the project *is*.
 
     Parameters
     ----------
     cwd
-        Directory the search starts from; defaults to the process's current
-        working directory. Passing it bypasses the cache (tests only).
+        Directory the search starts from; defaults to the process's start
+        directory (see the module docstring).
 
     Returns
     -------
     The directory of the nearest enclosing ``pyproject.toml``, or the starting
     directory itself when there is none — a stray script is its own project.
     """
-    global _cached_root
-    if cwd is None and _cached_root is not None:
-        return _cached_root
-    start = (Path.cwd() if cwd is None else cwd).resolve()
-    found = _find_pyproject(start)
-    root = found.parent if found is not None else start
-    if cwd is None:
-        _cached_root = root
-    return root
+    return _root_from(_start_dir if cwd is None else cwd.resolve())
 
 
 def state_dir() -> Path:
@@ -250,19 +283,18 @@ def load_settings(*, cwd: Path | None = None) -> Settings:
     ----------
     cwd
         Directory the project search starts from; defaults to the process's
-        current working directory.
+        start directory (see the module docstring).
 
     Returns
     -------
     The merged `Settings` (project layer over user layer over defaults).
     """
     values = _validated(_read_toml(user_config_path()), source=str(user_config_path()))
-    values.update(_project_table(Path.cwd() if cwd is None else cwd))
+    values.update(_project_table(_start_dir if cwd is None else cwd))
     return Settings(**values)
 
 
 _cached: Settings | None = None
-_cached_root: Path | None = None
 
 
 def settings() -> Settings:
@@ -308,8 +340,10 @@ def reset() -> None:
     """Drop the cached settings so the next `settings` call re-reads the files.
 
     Only tests should need this — a process's configuration does not change
-    under it. The cached project root goes with it, for the same reason.
+    under it. The start directory becomes the *current* directory, so a test
+    can ``chdir`` into a temp project and reset.
     """
-    global _cached, _cached_root
+    global _cached, _start_dir
     _cached = None
-    _cached_root = None
+    _start_dir = _cwd()
+    _root_from.cache_clear()
