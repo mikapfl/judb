@@ -334,7 +334,9 @@ def _write_atomic(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
-        tmp.write_text(text, encoding="utf-8")
+        # Always "\n": the default would write "\r\n" on Windows, turning every
+        # line of a library someone committed from Linux into a diff.
+        tmp.write_text(text, encoding="utf-8", newline="\n")
         os.replace(tmp, path)
     finally:
         tmp.unlink(missing_ok=True)

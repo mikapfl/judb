@@ -134,6 +134,15 @@ def test_save_is_atomic_and_leaves_no_debris(tmp_path: Path):
     assert [c.name for c in cells.load(path)] == ["two"]
 
 
+def test_files_are_written_with_unix_line_endings(tmp_path: Path):
+    """On every platform: a committed library must not flip between "\\n" and
+    "\\r\\n" depending on who saved it last (Windows CI is what catches this)."""
+    path = tmp_path / "cells.py"
+    cells.save(path, [cells.Cell(code="1\n2", name="one")], header="# judb")
+    assert b"\r" not in path.read_bytes()
+    assert cells.load(path) == [cells.Cell(code="1\n2", name="one")]
+
+
 def test_load_of_a_missing_file_is_empty(tmp_path: Path):
     assert cells.load(tmp_path / "nope.py") == []
 
