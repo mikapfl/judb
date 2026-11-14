@@ -25,7 +25,7 @@ from collections.abc import Iterable
 from types import CodeType, FrameType, TracebackType
 from typing import TYPE_CHECKING, Any
 
-from . import config, mpl_backend
+from . import cells, config, mpl_backend
 from .console import Console
 from .protocol import CellResult
 from .tracebacks import format_traceback
@@ -862,7 +862,9 @@ class Debugger(bdb.Bdb):
         Returns
         -------
         The frame's filename, line number, function name, sorted local names,
-        full source, and breakpoint records (see :meth:`_file_breaks`).
+        full source, breakpoint records (see :meth:`_file_breaks`), and the
+        frame's **location key** — the project-relative ``file.py::qualname``
+        saved cells are pinned to (see :func:`judb.cells.location_of`).
         """
         # Report bdb's *canonical* filename, the same identity `_all_breaks` and
         # `self.breaks` use, so the browser can match a breakpoint's file against
@@ -878,6 +880,7 @@ class Debugger(bdb.Bdb):
             "locals": sorted(frame.f_locals),
             "source": "".join(linecache.getlines(frame.f_code.co_filename)),
             "breakpoints": self._file_breaks(filename),
+            "location": cells.location_of(frame),
         }
 
     def _emit_cell_result(self, result: CellResult) -> None:

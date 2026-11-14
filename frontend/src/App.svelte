@@ -21,6 +21,10 @@
 
   $effect(() => {
     conn.connect();
+    // A reload or a closed tab must not cost the last half-second of typing.
+    const flush = () => conn.flush();
+    window.addEventListener("pagehide", flush);
+    return () => window.removeEventListener("pagehide", flush);
   });
 
   const title = (id: PaneId) => SECONDARY_PANES.find((p) => p.id === id)!.title;

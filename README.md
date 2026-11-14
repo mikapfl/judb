@@ -134,6 +134,48 @@ Under the hood this is matplotlib's own WebAgg engine (the same one behind
 required**. Interactivity is live whenever the debuggee is paused and freezes on
 Continue, since the figure lives in the paused frame.
 
+## Cells that come back
+
+judb saves the console as you type, so the cells you built up to understand a
+bug are still there the next time you run the program — no retyping after a fix,
+which is the whole reason a notebook feels fast. The watch expressions come back
+with them.
+
+Cells are stored as plain `# %%` percent cells — the format jupytext, VS Code
+and Spyder already read — so the file is a notebook in your own editor too:
+
+```python
+# %% a first look
+df.describe()
+
+# %% the losses at="train.py::train_epoch"
+import matplotlib.pyplot as plt
+plt.plot(losses)
+```
+
+That `at=` is a **pin**. Press 📌 on a cell while paused in `train_epoch()` and
+the console grows a tab for that function; land there again — tomorrow, or three
+runs later — and the tab comes back to the front with your cells in it. Pin to a
+file (`at="train.py"`) for cells that suit anywhere in it, and leave the pin off
+for cells you want everywhere. judb only follows the frame once you have pinned
+something, and never switches tabs while you are typing.
+
+**☰ Saved cells** above the console keeps two libraries:
+
+| | where | what it is for |
+| --- | --- | --- |
+| Yours | `~/.config/judb/cells.py` | the cells you want in every project |
+| Project | `<project>/.judb/cells.py` | committed, so anyone debugging this project gets them |
+
+A cell tagged `tags=["setup"]` in *your* library — the `import numpy as np` you
+always start with — runs itself once per session. Cells that came with a project
+never run by themselves; judb shows them and inserts them, and running one is
+your call.
+
+The working notebook is written under `~/.local/state/judb/` (or
+`$XDG_STATE_HOME`), never into your checkout: the only file judb puts in your
+repository is `.judb/cells.py`, and only when you ask it to save there.
+
 ## Configuration
 
 judb runs with no configuration at all. When you do want to change how it
@@ -167,10 +209,11 @@ script, so `--epochs 3` above reaches `train.py`. Run `python -m judb --help`
 for the full list. A setting judb does not recognise is a warning on stderr, not
 an error — a stale key never stops you from debugging.
 
-Two things live in the browser instead, because that is where they are used: the
-light/dark theme (the toolbar toggle) and your watch expressions, both remembered
-per browser. And `JUDB_NO_BROWSER=1` in the environment suppresses the browser
-tab whatever the configuration says, for headless boxes and CI.
+One thing lives in the browser instead, because that is where it is used: the
+light/dark theme (the toolbar toggle). Your cells and watch expressions are
+saved on disk — see [Cells that come back](#cells-that-come-back). And
+`JUDB_NO_BROWSER=1` in the environment suppresses the browser tab whatever the
+configuration says, for headless boxes and CI.
 
 ## Threads and processes
 

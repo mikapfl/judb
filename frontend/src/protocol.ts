@@ -69,6 +69,10 @@ export interface FrameView {
   source: string;
   /** Breakpoints set in this frame's file. */
   breakpoints: Breakpoint[];
+  /** Where saved cells pin: `"<path relative to the project root>::<qualname>"`,
+   *  or the file alone for a module frame. Empty for code with no file on disk.
+   *  Mirrors judb/cells.py's `location_of`. */
+  location?: string;
 }
 
 /** One traceback frame: where it is, and a window of source around the failing
@@ -232,6 +236,48 @@ export interface MplMsg {
   download_error?: string;
 }
 
+// --- saved cells (Phase 3a) ---------------------------------------------
+
+/** One stored cell. `at` is its location key — a function (`"f.py::run"`), a
+ *  file (`"f.py"`), or `""` for "available everywhere"; the three are rungs of
+ *  one ladder (see docs/PHASE3A_PLAN.md §3). Mirrors judb/cells.py's `Cell`. */
+export interface SavedCell {
+  code: string;
+  name: string;
+  at: string;
+  tags: string[];
+}
+
+/** Which of the two cell libraries: the user's own, or the project's. */
+export type LibraryScope = "user" | "project";
+
+/** Pushed on connect: the working notebook as the *last run* left it. The wire
+ *  carries a flat list exactly like the file; `at` is what groups cells into
+ *  tabs, and the browser does the grouping. */
+export interface NotebookMsg {
+  type: "notebook";
+  cells: SavedCell[];
+  /** Location key of the tab that was in front. */
+  active: string;
+  /** The watch list, which lives here now rather than in localStorage — a
+   *  random port per run means localStorage cannot outlive the debuggee. */
+  watches: string[];
+}
+
+/** Pushed on connect and after any `library_*` edit: the two cell libraries,
+ *  as they are on disk. */
+export interface LibraryMsg {
+  type: "library";
+  /** Set when the edit that prompted this message could not be written. */
+  error?: string;
+  /** The user's own cells; `tags: ["setup"]` ones run themselves once. */
+  user: SavedCell[];
+  /** The project's committed cells. judb never runs these by itself. */
+  project: SavedCell[];
+  /** Where each library lives, so the UI can name the file a save will touch. */
+  paths: { user: string; project: string };
+}
+
 /** Cell-output mime carrying `{ id }` — mounts an interactive WebAgg canvas. */
 export const WEBAGG_MIME = "application/vnd.judb.webagg+json";
 
@@ -246,6 +292,8 @@ export type ServerMsg =
   | WatchesMsg
   | CompletionsMsg
   | BreakpointsMsg
+  | NotebookMsg
+  | LibraryMsg
   | MplMsg
   | ErrorMsg;
 
@@ -275,6 +323,17 @@ export type Command =
       ignore?: number;
     }
   | { cmd: "clear_break"; filename: string; line: number }
+  /** The whole working notebook, flat, plus which tab was in front. Saved by
+   *  the *server* thread, not the debuggee — see docs/PHASE3A_PLAN.md §8. */
+  | { cmd: "save_notebook"; cells: SavedCell[]; active: string }
+  /** Edits to one library file, applied by the server to the file *as it is on
+   *  disk* — never a replace with the browser's copy, which dates from connect
+   *  and would undo whatever the user did to the file in their editor since.
+   *  `cell` names an entry by its content. Writing `"project"` is the only thing
+   *  judb ever puts inside the user's checkout, and only because they asked. */
+  | { cmd: "library_add"; scope: LibraryScope; cells: SavedCell[] }
+  | { cmd: "library_remove"; scope: LibraryScope; cell: SavedCell }
+  | { cmd: "library_rekey"; scope: LibraryScope; cell: SavedCell; at: string }
   | { cmd: "mpl_event"; id: string; content: unknown }
   | { cmd: "mpl_download"; id: string; format: string }
   | { cmd: "interrupt" };

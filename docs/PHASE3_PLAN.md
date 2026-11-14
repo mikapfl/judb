@@ -34,8 +34,12 @@ Phase-2a codebase. Same conventions: **[DECISION]** = recommended but open,
 >   first real `python -m judb` flags. A *user theme* is the obvious next
 >   setting and stays open (see B5).
 >
-> **Wave B is complete.** What follows is Phase 3a (saved/loadable debug cells)
-> — see `IMPLEMENTATION_PLAN.md` §5.
+> **Wave B is complete.** What follows is Phase 3a (saved/loadable debug cells),
+> now designed and built — see **`PHASE3A_PLAN.md`**, which also corrects B3's
+> closing claim: the watch list never did survive the *next run* of a program,
+> because `localStorage` is scoped to a port judb picks at random. Saved cells
+> and watches now live in files, and the principle is restated as *the browser
+> owns the state, the backend owns the durability*.
 
 Phase 2a gave us "something to show the world" — but only to someone sitting at a
 checkout running `make frontend` first. **Wave A makes it *reachable*** (a real
@@ -310,11 +314,16 @@ the difference is that a watch is *pinned* and *runs code*).
   an interruptible window (`_executing`) — otherwise a watch stuck in a loop
   would wedge the debugger with no way to remove it, since the wedged thread is
   the one that would have to process the removal.
-- **[DECISION] the browser owns the list.** It persists to `localStorage` and
-  re-sends the whole list on every connect; the backend only holds what it was
-  last told. That makes reconnect, refresh, *and* the next run of the same
-  program all work through one path, with no settings layer and no bidirectional
-  sync (cf. B5) — and it is the natural warm-up for Phase 3a's saved cells.
+- **[DECISION] the browser owns the list.** It re-sends the whole list on every
+  connect; the backend only holds what it was last told. That makes reconnect,
+  refresh *and* the next run of the same program work through one path, with no
+  settings layer and no bidirectional sync (cf. B5) — and it was the natural
+  warm-up for Phase 3a's saved cells.
+  **Corrected in Phase 3a:** the list was persisted to `localStorage`, which is
+  scoped to the *origin* — and judb binds a random port, so every run is a new
+  origin. It survived a refresh, never a new run. The ownership model was right;
+  only the storage was wrong, so the list now persists in a file next to the
+  saved notebook (`PHASE3A_PLAN.md` §1).
 - *Exit met:* watch `scale * 10`, step / select another frame, and the pane
   follows — ws-tested (`test_watches_evaluate_in_the_selected_frame`,
   `test_watches_refresh_on_every_pause`), plus store vitest and a Playwright test
@@ -462,8 +471,8 @@ and the whole surface is three keys.
 
 ## Explicitly deferred (not Phase 3)
 
-- **Phase 3a — saved/loadable debug cells** (setup/local/project cells). Sequenced
-  *after* this; watch-list persistence (B3) is a natural warm-up for it.
+- **Phase 3a — saved/loadable debug cells** (setup/local/project cells). Designed
+  and built after this wave; see `PHASE3A_PLAN.md`.
 - **Phase 4** — `sys.monitoring` fast breakpoints; `ipywidgets`/`%matplotlib
   widget` Comms; data-flow/call-graph pane; real remote & multi-thread/async;
   native JupyterLab-extension frontend; the file-tree browser (B4 stretch).

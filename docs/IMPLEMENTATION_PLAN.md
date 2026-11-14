@@ -404,15 +404,37 @@ own flags, each layer overriding the previous one key by key. Pure-UI
 preferences (theme, watch list) deliberately stay in the browser, so there is
 still **no bidirectional settings protocol** — the seam is unchanged.
 
-**Phase 3a – saved debug expressions.** Add a way to save + load cell sources
-close to the source, so repeated debugging can re-use cells. Things to consider
-(not yet decided what to implement):
-- "Setup" cells, which should always be loaded (per user? per project?)
-- "Local" cells, which should be saved locally and loaded on the next use
-  (per project? per file? per function? per line even?)
-- "Project" cells, which should be committed to version control and loaded
-  by anyone debugging this project (per project? per file? per function?
-  per line even? security/trust?)
+**Phase 3a – saved debug expressions. ✅ done** — designed and built in
+`PHASE3A_PLAN.md`, which is the source of truth for *why*. The problem it
+closes: the notebook used to die with the process, so the three cells you built
+up to diagnose a bug had to be retyped on the very next run — the friction
+`REQUIREMENT_ANALYSIS.md` says a notebook does not have.
+
+The three kinds of saved cell turned out to be one mechanism at three
+distances. Cells are stored as **percent-format `.py`** (`# %%`, what jupytext,
+VS Code and Spyder speak), so the tier that is *committed* diffs like the Python
+it is and every tier opens as cells in the user's own editor. A cell may carry a
+**location key** — `at="etl/clean.py::Cleaner.run"`, `at="etl/clean.py"`, or
+nothing at all — which is per-function, per-file and per-project scoping as three
+rungs of one ladder. (Per-*line* is deliberately excluded: line numbers move on
+every edit of the code under debug.) The console grew **tabs**, one per location
+that has cells plus a permanent Scratch, so the cell set following the selected
+frame is visible and reversible rather than a notebook that swaps underneath
+you; a cell is keyed only by an explicit **pin**, so nothing follows the frame
+until the user says it should. Only `setup`-tagged cells in the user's *own*
+library auto-run; a project's committed cells never do, because cloning a
+repository must not hand it a code-execution path into your debugger.
+
+Its other outcome was a correction. `localStorage` is scoped to an origin, and
+judb binds a random port, so *every run is a new origin*: the watch list B3
+called persistent survived a refresh but never the next run of the program. B3's
+instinct was right and its storage was wrong, so the rule is now **the browser
+owns the state, the backend owns the durability** — the browser still decides
+what the cells and watches are and still sends the whole list, and the backend
+writes it somewhere that outlives a TCP port (`judb/cells.py`). Saves are
+answered by the *server* thread rather than the queue, because the debuggee
+thread drains commands only while paused, and a save that waits for the next
+pause is lost exactly when the program runs off and dies.
 
 **Phase 3b - layout tweaks.** Responsive layout, layout settings, theming.
 

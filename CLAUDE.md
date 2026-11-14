@@ -12,7 +12,10 @@ notebook — something neither pdb/pudb nor a papermill-wrapped notebook does we
 
 Read `docs/REQUIREMENT_ANALYSIS.md` (motivation) and `docs/IMPLEMENTATION_PLAN.md`
 (architecture, design decisions, phased roadmap) before making non-trivial
-changes. The plan is the source of truth for *why* things are shaped the way they
+changes. `docs/ARCHITECTURE.md` is the map that goes with them: a C4 tour
+(context → containers → components → interfaces) with pointers to the actual
+symbols, the message catalogue, and the invariants each seam protects — start
+there when you need to find where something lives. The plan is the source of truth for *why* things are shaped the way they
 are; its §5 defines the phases and each phase's exit criterion.
 
 **Current status: Phase 3 Wave A shipped — `judb` is on PyPI, released through
@@ -25,7 +28,8 @@ pane), B3 (watch expressions + the Watch pane), B4 (multi-file `open_file`
 navigation) and B5 (settings — `judb/config.py`) are all done**. Phase 3b's
 **responsive layout** (80-column source floor, folding console, reflowing +
 closable secondary panes — `frontend/src/lib/layout.svelte.ts`) is done too;
-next up is Phase 3a (saved/loadable debug cells). Phase 2 (four-pane app, the MVP) is complete. Phase 1
+Phase 3a (saved/loadable debug cells — `judb/cells.py`, `docs/PHASE3A_PLAN.md`) is
+built too. Phase 2 (four-pane app, the MVP) is complete. Phase 1
 (vertical slice) is complete: `judb.set_trace()` starts a localhost websocket server
 (`judb/server.py`) and opens a browser page served from `judb/static/index.html`.
 That page is now the **built Svelte SPA** (source in `frontend/`, see below), not
@@ -109,10 +113,18 @@ Files are named for **what they cover**, not the phase that introduced them:
 - `test_entrypoints.py` — how users start judb: `pytest --pdbcls` (post-mortem,
   `--trace`, `breakpoint()`), `python -m judb` (script and `-m module`), and
   `set_trace` hardening.
+- `test_cells.py` — saved debug cells: the percent format (including a file
+  jupytext wrote), where each tier lands on disk, location keys, and the
+  headline claim proved with **two real processes** — run a cell, kill the
+  debuggee, start it again, the cells are there.
 - `test_config.py` — how users configure judb: config-file resolution and
   precedence, `python -m judb`'s option parsing, and two real subprocesses
   proving a project's `[tool.judb]` is honoured (and beaten by a flag).
 - `test_mpl_backend.py` — the `%matplotlib judb` WebAgg backend.
+- `conftest.py` — one autouse, session-scoped fixture pointing `$XDG_STATE_HOME`
+  and `$XDG_CONFIG_HOME` at a temp dir. Since Phase 3a an in-process test's
+  project root *is* this checkout, so without it the suite would read and
+  overwrite the developer's own saved cells.
 - `helpers.py` — shared drivers (`ws_url`, `recv_type`, `read_judb_url`,
   `read_pty_for_url`, …). Imported as `from helpers import ...`: `tests/` has no
   `__init__.py`, so pytest's prepend import mode puts it on `sys.path`.
@@ -177,6 +189,18 @@ debuggee and (eventually) the web server:
   use the Jupyter mime-bundle shape (dict keyed by mime type) so the future
   frontend can render them with standard tooling (`@jupyterlab/rendermime`) with
   **zero backend change**. This mime-bundle format is a load-bearing contract; keep it.
+- **`judb/cells.py`** — saved debug cells (Phase 3a): the working notebook
+  (auto-saved), the user's library and the project's committed one, all stored as
+  **percent cells** (`# %%`, the jupytext / VS Code / Spyder convention) so the
+  committed tier diffs like the Python it is and every tier opens as cells in the
+  user's own editor. A cell may carry a **location key** —
+  `at="etl/clean.py::Cleaner.run"`, `at="etl/clean.py"`, or nothing — which makes
+  per-function, per-file and per-project scoping three rungs of *one* ladder
+  (`location_of`; the browser's `matchesLocation` does the matching); per-*line* keys are deliberately excluded, because
+  line numbers move on every edit of the code under debug. The module is pure file
+  handling — no frame is touched except to read a location off one, nothing is
+  executed — which is what lets the server thread own it (see the threading
+  invariant). Read `docs/PHASE3A_PLAN.md` before changing its shape.
 - **`judb/config.py`** — the process-level settings (`open_browser`,
   `stop_on_entry`, `break_on_exception`, `figure_format`), resolved once per
   process from an
@@ -184,13 +208,24 @@ debuggee and (eventually) the web server:
   `pyproject.toml`'s `[tool.judb]` → `$XDG_CONFIG_HOME/judb/config.toml` →
   defaults, merged per key. Read it via `config.settings()`; a `bool | None`
   parameter defaulting to `None` (as in `start_server`) is how an explicit
-  argument keeps winning. Pure-UI prefs (theme, watch list) stay in the
-  browser's `localStorage` — there is deliberately **no settings message on the
-  wire**. A bad config warns on stderr and falls back; a bad *flag* exits 2.
+  argument keeps winning. Pure-UI prefs (the theme) stay in the browser's
+  `localStorage` — there is deliberately **no settings message on the wire**.
+  A bad config warns on stderr and falls back; a bad *flag* exits 2. It also
+  resolves the **project root** (`project_root` — the same nearest-
+  `pyproject.toml` walk, from a start directory fixed when judb is imported, so a
+  debuggee's `chdir` cannot change which project it is) and the
+  **state dir** (`state_dir`, `$XDG_STATE_HOME`), which is where `cells.py`
+  auto-saves.
 - **`judb/server.py`** — aiohttp server on a daemon thread bridging the debugger's
   queues to a WebSocket (browser→`inbound.put`, `outbound`→browser). Localhost +
   random port + random URL token (mandatory: it runs arbitrary code). The seam is
-  *only* the queues; the server never executes cells. Note: `outbound.get()` is
+  *only* the queues; the server never executes cells. **Two commands bypass the
+  queue on purpose**, both because the debuggee thread is the wrong one to ask:
+  `interrupt` (it is busy inside a runaway cell) and the cell-storage commands
+  (`save_notebook` and the `library_*` edits — it drains commands only while *paused*, so a
+  queued save would be lost exactly when the program runs off and dies). Storage
+  touches only disk, so this does not weaken "the server never executes cells".
+  Note: `outbound.get()` is
   drained on a **dedicated daemon thread**, not `run_in_executor` — the default
   executor's non-daemon workers block interpreter shutdown when parked in a get()
   that never returns.
@@ -204,10 +239,18 @@ debuggee and (eventually) the web server:
   The Variables pane is a recursive `panes/VarNode.svelte` tree over an `expand`
   cache in the store (keyed by path, cleared on frame change); console cells get
   tab-completion via an async CodeMirror source backed by `conn.complete()` (a
-  FIFO-correlated `complete`→`completions` round-trip). `panes/WatchPane.svelte`
-  owns the watch *list* (persisted to `localStorage`, re-sent whole on every
-  connect — the backend holds only what it was last told, so the two can't
-  desync); the values come back on `watches`. The Source pane shows the selected
+  FIFO-correlated `complete`→`completions` round-trip). The console is a set of
+  **tabs** (`conn.tabs`, one per location key that has cells plus a permanent
+  Scratch): `conn.cells` is the tab in front, the notebook auto-saves through
+  `save_notebook` (within half a second of an edit, and `flush`ed before any
+  command that can end the debuggee — resume, quit, running a cell), and a pause whose `location` matches a tab brings it
+  forward — except while an editor has focus, where it is badged instead, because
+  judb never moves the console out from under someone's hands.
+  `panes/CellLibrary.svelte` is the saved-cell popover (not a sixth secondary
+  pane; the layout already reflows five into up to three rows).
+  `panes/WatchPane.svelte` owns the watch *list*, re-sent whole on every connect
+  — the backend holds only what it was last told, so the two can't desync; the
+  values come back on `watches`. The Source pane shows the selected
   frame's file *or* a browsed one (`conn.viewing`, from `open_file`): everything
   acting on "the file on screen" — the gutter, every breakpoint command — goes
   through `shownFilename`/`shownSource`/`shownBreakpoints`, and the current-line
@@ -224,7 +267,7 @@ debuggee and (eventually) the web server:
   is the only way back for a closed pane. The backend
   contract is unchanged: same queues, same mime bundles.
 
-### Three invariants that are easy to break
+### Invariants that are easy to break
 
 - **Colour lives in the frontend, in one palette per kind.** The backend never
   decides what colour anything is. Python source — the Source pane, console
@@ -245,6 +288,21 @@ debuggee and (eventually) the web server:
   happen there. The interaction loop blocks that thread on `inbound.get()`; the
   websocket server (`server.py`) feeds those queues from a *separate daemon thread*
   (the plan's §2 ASCII diagram). Do not move cell execution off the debuggee thread.
+- **judb never runs code it found in a repository.** Saved cells come from three
+  files; only `setup`-tagged cells in the *user's own* library
+  (`$XDG_CONFIG_HOME/judb/cells.py`) run themselves. The project's committed
+  `.judb/cells.py` is displayed and inserted, never auto-run — cloning a
+  repository must not hand it a code-execution path into your debugger. Related:
+  judb auto-writes only *outside* the checkout (the working notebook lives under
+  `$XDG_STATE_HOME`); the repo is written only on an explicit "save to project".
+- **A cell library is edited on disk, never replaced.** The user's and the
+  project's `cells.py` are files people also edit by hand, and the browser's
+  copy dates from when it connected. So the wire carries one *change*
+  (`library_add` / `library_remove` / `library_rekey`) and `cells._edit_library`
+  re-reads the file, applies it, and writes everything else back untouched —
+  hand-added cells, the header, metadata judb does not know. Sending "the whole
+  library" back from the browser is how saving Scratch once deleted every
+  setup cell.
 - **`_capture` is module-level in `console.py`.** The hook/publisher instances are
   created by IPython, so a module global is the seam they append to. This is safe
   only because cell execution is serialized on the debuggee thread — don't

@@ -155,6 +155,7 @@ def test_configure_overrides_files_and_caches(
         "[tool.judb]\nbreak_on_exception = false\nopen_browser = false\n",
     )
     monkeypatch.chdir(project)
+    config.reset()  # as a process started here would find things
 
     # `None` means "not specified on the command line": it must not clobber the
     # file's value with a default.
@@ -166,17 +167,26 @@ def test_configure_overrides_files_and_caches(
     assert config.settings() is settings  # cached, so files are read once
 
 
-def test_settings_are_resolved_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """The cache is what keeps a debuggee's ``chdir`` from changing the answer."""
+def test_a_debuggee_chdir_does_not_change_the_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The project is fixed where judb started — *before* anything asks for it.
+
+    The debuggee below changes directory before judb's settings or project root
+    are first read, which is the order a `chdir` ahead of the first breakpoint
+    produces. Neither may follow it.
+    """
     project = _project(tmp_path / "proj", "[tool.judb]\nopen_browser = false\n")
     monkeypatch.chdir(project)
-    assert config.settings().open_browser is False
+    config.reset()  # as a process started here would find things
 
     elsewhere = _project(tmp_path / "other", "")
     monkeypatch.chdir(elsewhere)
 
-    assert config.settings().open_browser is False  # not re-read
-    assert config.load_settings().open_browser is True  # ...but the files did change
+    assert config.settings().open_browser is False
+    assert config.project_root() == project.resolve()
+    assert config.load_settings().open_browser is False  # even read afresh
+    assert config.load_settings(cwd=elsewhere).open_browser is True
 
 
 # --- command line ---------------------------------------------------------

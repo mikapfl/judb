@@ -1,33 +1,5 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-
-const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
-
-/** Launch a Python debuggee (defaults to the live-pause fixture); resolve once
- *  it prints its server URL. */
-function startDebuggee(
-  script = "frontend/e2e/debuggee.py",
-): Promise<{ proc: ChildProcessWithoutNullStreams; url: string }> {
-  const proc = spawn("uv", ["run", "python", script], {
-    cwd: REPO_ROOT,
-  });
-  return new Promise((resolve, reject) => {
-    let buf = "";
-    const onData = (chunk: Buffer) => {
-      buf += chunk.toString();
-      const line = buf.split("\n").find((l) => l.startsWith("http://"));
-      if (line) {
-        proc.stdout.off("data", onData);
-        resolve({ proc, url: line.trim() });
-      }
-    };
-    proc.stdout.on("data", onData);
-    proc.stderr.on("data", (c: Buffer) => process.stderr.write(c));
-    proc.on("exit", (code) => reject(new Error(`debuggee exited early (${code})`)));
-    setTimeout(() => reject(new Error("debuggee did not print a URL in time")), 20_000);
-  });
-}
+import { REPO_ROOT, startDebuggee } from "./harness";
 
 test("plot a paused frame's array in the browser, then continue", async ({ page }) => {
   const { proc, url } = await startDebuggee();
